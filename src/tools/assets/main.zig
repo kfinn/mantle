@@ -100,7 +100,10 @@ fn generate(allocator: std.mem.Allocator, args: *std.process.ArgIterator) !void 
             const path_with_digest = digested_asset_paths_by_asset_path.get(asset.path).?;
             try asset.install(output_dir, path_with_digest, &digested_asset_paths_by_asset_path, allocator);
 
-            try dependencies_file_writer.print(" {s}/{s}", .{ assets_path, asset.path });
+            try dependencies_file_writer.writeByte(' ');
+            try writeEscapedPath(dependencies_file_writer, assets_path);
+            try dependencies_file_writer.writeByte('/');
+            try writeEscapedPath(dependencies_file_writer, asset.path);
 
             try output_file_writer.writeAll("pub const @\"");
             try writeEscapedPath(output_file_writer, asset.path);
