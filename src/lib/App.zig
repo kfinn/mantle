@@ -14,6 +14,7 @@ pub const ComptimeOptions = struct {
     router: router_module.ComptimeOptions,
     Session: type = struct {},
     migrations: []const type = &[_]type{},
+    tasks: []const type = &[_]type{},
 };
 
 pub const Config = struct {
@@ -47,6 +48,7 @@ pub fn App(comptime comptime_options: ComptimeOptions) type {
         pub const ControllerContext = controller_context.ControllerContext(AppSelf);
         pub const Session = comptime_options.Session;
         pub const migrations = sorted_migrations;
+        pub const tasks = comptime_options.tasks;
 
         pub fn init(allocator: std.mem.Allocator, config: Config) !@This() {
             return .{
