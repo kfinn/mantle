@@ -143,9 +143,9 @@ pub fn Cli(comptime AppArgument: type) type {
                             try conn.rollback();
                             return error.MigrationFailed;
                         };
+                        std.log.info("Migrated {s} ({d})", .{ @typeName(migration), migration.version });
                     }
 
-                    std.log.info("Migrated {s} ({d})", .{ @typeName(migration), migration.version });
                     try conn.commit();
                 }
             }
