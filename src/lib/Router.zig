@@ -10,8 +10,9 @@ const cgi_escape = @import("cgi_escape.zig");
 const RouterError = error{unknown};
 
 pub const ComptimeOptions = struct {
-    routes_entries: []const RoutesEntry,
-    assets: []const type,
+    root: ?Root = null,
+    routes: []const Route,
+    assets: []const type = &[_]type{},
 };
 
 fn RouteParams(comptime param_names: []const [:0]const u8) type {
@@ -84,7 +85,20 @@ pub fn Router(comptime App: type, comptime comptime_options: ComptimeOptions) ty
                 return;
             }
 
-            if (self.handleRouteEntries(&empty_param_names, request, response, comptime_options.routes_entries, request.url.path[1..], .{})) |handled| {
+            if (comptime_options.root) |root| {
+                if (std.mem.eql(u8, request.url.path, "/")) {
+                    self.performControllerAction(root.Controller, root.action, request, response, .{}) catch |err| {
+                        std.log.err("error: {}", .{err});
+                        if (@errorReturnTrace()) |error_return_trace| {
+                            std.debug.dumpStackTrace(error_return_trace.*);
+                        }
+                        renderServerError(response);
+                        return;
+                    };
+                }
+            }
+
+            if (self.handleRouteEntries(&empty_param_names, request, response, comptime_options.routes, request.url.path[1..], .{})) |handled| {
                 if (handled) return;
             } else |err| {
                 std.log.err("error: {}", .{err});
@@ -110,12 +124,12 @@ pub fn Router(comptime App: type, comptime comptime_options: ComptimeOptions) ty
             response.body = "Not Found";
         }
 
-        fn handleRouteEntries(self: *@This(), comptime route_param_names: []const [:0]const u8, request: *httpz.Request, response: *httpz.Response, comptime routes_entries: []const RoutesEntry, path: []const u8, route_params: RouteParams(route_param_names)) !bool {
-            inline for (routes_entries) |routes_entry| {
-                const handled = switch (routes_entry) {
+        fn handleRouteEntries(self: *@This(), comptime route_param_names: []const [:0]const u8, request: *httpz.Request, response: *httpz.Response, comptime routes: []const Route, path: []const u8, route_params: RouteParams(route_param_names)) !bool {
+            inline for (routes) |route| {
+                const handled = switch (route) {
                     .resource => |resource| try self.handleResource(route_param_names, request, response, resource, path, route_params),
                     .resources => |resources| try self.handleResources(route_param_names, request, response, resources, path, route_params),
-                    else => return RouterError.unknown,
+                    .namespace => |namespace| try self.handleNamespace(route_param_names, request, response, namespace, path, route_params),
                 };
                 if (handled) {
                     return true;
@@ -204,6 +218,19 @@ pub fn Router(comptime App: type, comptime comptime_options: ComptimeOptions) ty
             return false;
         }
 
+        fn handleNamespace(self: *@This(), comptime route_param_names: []const [:0]const u8, request: *httpz.Request, response: *httpz.Response, comptime namespace: Namespace, path: []const u8, route_params: RouteParams(route_param_names)) !bool {
+            const first_path_segment, const rest_path_segments = splitFirstPathSegment(path);
+
+            if (!std.mem.eql(u8, namespace.name, first_path_segment)) {
+                return false;
+            }
+
+            if (namespace.routes) |child_routes| {
+                return try self.handleRouteEntries(request, response, child_routes, rest_path_segments, route_params);
+            }
+            return false;
+        }
+
         fn app(self: *@This()) *App {
             return @alignCast(@fieldParentPtr("router", self));
         }
@@ -259,7 +286,12 @@ pub fn Router(comptime App: type, comptime comptime_options: ComptimeOptions) ty
     };
 }
 
-pub const RoutesEntry = union(enum) {
+pub const Root = struct {
+    Controller: type,
+    action: []const u8,
+};
+
+pub const Route = union(enum) {
     namespace: Namespace,
     resource: Resource,
     resources: Resources,
@@ -267,19 +299,19 @@ pub const RoutesEntry = union(enum) {
 
 pub const Namespace = struct {
     name: []const u8,
-    routes: ?[]const RoutesEntry,
+    routes: ?[]const Route,
 };
 
 pub const Resources = struct {
     name: []const u8,
     Controller: type,
-    routes: ?[]const RoutesEntry = null,
+    routes: ?[]const Route = null,
 };
 
 pub const Resource = struct {
     name: []const u8,
     Controller: type,
-    routes: ?[]const RoutesEntry = null,
+    routes: ?[]const Route = null,
 };
 
 fn splitFirstPathSegment(path: []const u8) [2][]const u8 {

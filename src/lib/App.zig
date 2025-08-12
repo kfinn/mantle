@@ -4,9 +4,6 @@ const pg = @import("pg");
 
 const router_module = @import("Router.zig");
 const Router = router_module.Router;
-const RoutesEntry = router_module.RoutesEntry;
-const findRoutesEntriesAction = router_module.findRoutesEntriesAction;
-const Params = router_module.Params;
 
 const controller_context = @import("ControllerContext.zig");
 

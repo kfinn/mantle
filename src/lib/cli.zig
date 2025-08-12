@@ -113,6 +113,9 @@ pub fn Cli(comptime AppArgument: type) type {
 
                     _ = conn.exec("SELECT pg_advisory_xact_lock($1)", .{db_migrate_advisory_lock_key}) catch |err| {
                         std.log.err("Migration failed ({s})", .{@errorName(err)});
+                        if (conn.err) |pg_err| {
+                            std.log.err("  {s}", .{pg_err.message});
+                        }
                         try conn.rollback();
                         return error.UnableToAcquireMigrationLock;
                     };
@@ -122,6 +125,9 @@ pub fn Cli(comptime AppArgument: type) type {
                         .{migration.version},
                     ) catch |err| {
                         std.log.err("Migration failed ({s}): {s}", .{ @errorName(err), @typeName(migration) });
+                        if (conn.err) |pg_err| {
+                            std.log.err("  {s}", .{pg_err.message});
+                        }
                         try conn.rollback();
                         return error.MigrationFailed;
                     } orelse unreachable;
@@ -131,6 +137,9 @@ pub fn Cli(comptime AppArgument: type) type {
                     if (!schema_migration_exists) {
                         migration.up(cli.app, conn) catch |err| {
                             std.log.err("Migration failed ({s}): {s}", .{ @errorName(err), @typeName(migration) });
+                            if (conn.err) |pg_err| {
+                                std.log.err("  {s}", .{pg_err.message});
+                            }
                             if (@errorReturnTrace()) |error_return_trace| {
                                 std.debug.dumpStackTrace(error_return_trace.*);
                             }
@@ -140,6 +149,9 @@ pub fn Cli(comptime AppArgument: type) type {
 
                         _ = conn.exec("INSERT INTO schema_migrations (version) VALUES ($1)", .{migration.version}) catch |err| {
                             std.log.err("Migration failed ({s}): {s}", .{ @errorName(err), @typeName(migration) });
+                            if (conn.err) |pg_err| {
+                                std.log.err("  {s}", .{pg_err.message});
+                            }
                             try conn.rollback();
                             return error.MigrationFailed;
                         };
@@ -166,6 +178,9 @@ pub fn Cli(comptime AppArgument: type) type {
 
                 _ = conn.exec("SELECT pg_advisory_xact_lock($1)", .{db_migrate_advisory_lock_key}) catch |err| {
                     std.log.err("Rollback failed ({s})", .{@errorName(err)});
+                    if (conn.err) |pg_err| {
+                        std.log.err("  {s}", .{pg_err.message});
+                    }
                     try conn.rollback();
                     return error.UnableToAcquireMigrationLock;
                 };
@@ -181,12 +196,18 @@ pub fn Cli(comptime AppArgument: type) type {
                     if (migration.version == version) {
                         migration.down(cli.app, conn) catch |err| {
                             std.log.err("Rollback failed: ({s}): {s}", .{ @errorName(err), @typeName(migration) });
+                            if (conn.err) |pg_err| {
+                                std.log.err("  {s}", .{pg_err.message});
+                            }
                             try conn.rollback();
                             return error.RollbackFailed;
                         };
 
                         _ = conn.exec("DELETE FROM schema_migrations WHERE version = $1", .{migration.version}) catch |err| {
                             std.log.err("Rollback failed ({s}): {s}", .{ @errorName(err), @typeName(migration) });
+                            if (conn.err) |pg_err| {
+                                std.log.err("  {s}", .{pg_err.message});
+                            }
                             try conn.rollback();
                             return error.RollbackFailed;
                         };
@@ -201,7 +222,7 @@ pub fn Cli(comptime AppArgument: type) type {
         };
 
         pub fn fatal(_: *const @This(), comptime format: []const u8, args: anytype) noreturn {
-            const std_err = std.io.getStdOut();
+            const std_err = std.io.getStdErr();
             const std_err_writer = std_err.writer();
 
             if (std_err_writer.print(format, args)) {} else |_| {}
