@@ -11,3 +11,4 @@ pub const Resource = router_module.Resource;
 pub const Params = router_module.Params;
 pub const validation = @import("validation.zig");
 pub const cli = @import("cli.zig");
+pub const inflector = @import("inflector.zig");

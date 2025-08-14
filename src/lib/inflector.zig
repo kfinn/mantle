@@ -53,7 +53,7 @@ fn findIrregularInflectionFromPlural(plural: []const u8) ?IrregularInflection {
     return null;
 }
 
-pub fn singularizeCount(plural: []const u8) usize {
+fn singularizeCount(plural: []const u8) usize {
     if (findIrregularInflectionFromPlural(plural)) |irregular_inflection| {
         return irregular_inflection.plural.len;
     }
@@ -61,7 +61,7 @@ pub fn singularizeCount(plural: []const u8) usize {
     return plural.len - suffix_inflection.plural_suffix.len + suffix_inflection.singular_suffix.len;
 }
 
-pub fn bufSingularize(buf: []u8, plural: []const u8) std.fmt.BufPrintError![]u8 {
+fn bufSingularize(buf: []u8, plural: []const u8) std.fmt.BufPrintError![]u8 {
     if (findIrregularInflectionFromPlural(plural)) |irregular_inflection| {
         return std.fmt.bufPrint(buf, "{s}", .{irregular_inflection.plural});
     }
@@ -88,7 +88,7 @@ fn findIrregularInflectionFromSingular(singular: []const u8) ?IrregularInflectio
     return null;
 }
 
-pub fn pluralizeCount(plural: []const u8) usize {
+fn pluralizeCount(plural: []const u8) usize {
     if (findIrregularInflectionFromPlural(plural)) |irregular_inflection| {
         return irregular_inflection.plural.len;
     }
@@ -96,7 +96,7 @@ pub fn pluralizeCount(plural: []const u8) usize {
     return plural.len - suffix_inflection.singular_suffix.len + suffix_inflection.plural_suffix.len;
 }
 
-pub fn bufPluralize(buf: []u8, plural: []const u8) std.fmt.BufPrintError![]u8 {
+fn bufPluralize(buf: []u8, plural: []const u8) std.fmt.BufPrintError![]u8 {
     if (findIrregularInflectionFromPlural(plural)) |irregular_inflection| {
         return std.fmt.bufPrint(buf, "{s}", .{irregular_inflection.plural});
     }
@@ -104,7 +104,7 @@ pub fn bufPluralize(buf: []u8, plural: []const u8) std.fmt.BufPrintError![]u8 {
     return std.fmt.bufPrint(buf, "{s}{s}", .{ plural[0 .. plural.len - suffix_inflection.singular_suffix.len], suffix_inflection.plural_suffix });
 }
 
-pub inline fn comptimePluralize(comptime plural: []const u8) *const [pluralizeCount(plural):0]u8 {
+inline fn comptimePluralize(comptime plural: []const u8) *const [pluralizeCount(plural):0]u8 {
     comptime {
         var buf: [pluralizeCount(plural):0]u8 = undefined;
         _ = bufPluralize(&buf, plural) catch unreachable;
@@ -136,33 +136,33 @@ const WordIterator = struct {
             switch (self.state) {
                 .acronym => {
                     if (std.ascii.isLower(self.text[end_index])) {
-                        const result = self.text[self.index..(end_index - 1)];
+                        const word = self.text[self.index..(end_index - 1)];
                         self.index = end_index - 1;
                         self.state = .word;
-                        return result;
+                        return word;
                     }
                 },
                 .word => {
                     if (std.ascii.isLower(self.text[end_index - 1]) and std.ascii.isUpper(self.text[end_index])) {
-                        const result = self.text[self.index..end_index];
+                        const word = self.text[self.index..end_index];
                         self.index = end_index;
                         const next_end_index = end_index + 1;
                         if (next_end_index < self.text.len) {
                             self.state = if (std.ascii.isUpper(self.text[next_end_index])) .acronym else .word;
                         }
-                        return result;
+                        return word;
                     }
                 },
             }
         }
 
-        const result = self.text[self.index..];
+        const word = self.text[self.index..];
         self.index = self.text.len;
-        return result;
+        return word;
     }
 };
 
-pub fn snakeizeCount(text: []const u8) usize {
+fn decamelizeCount(text: []const u8) usize {
     var word_iterator = WordIterator.init(text);
     var words_count = 0;
     while (word_iterator.next()) |_| {
@@ -171,7 +171,7 @@ pub fn snakeizeCount(text: []const u8) usize {
     return text.len + words_count - 1;
 }
 
-pub fn bufSnakeize(buf: []u8, text: []const u8) std.fmt.BufPrintError![]u8 {
+fn bufDecamelize(buf: []u8, text: []const u8, separator: u8) std.fmt.BufPrintError![]u8 {
     var word_iterator = WordIterator.init(text);
     var buf_stream = std.io.fixedBufferStream(buf);
     var buf_writer = buf_stream.writer();
@@ -179,7 +179,7 @@ pub fn bufSnakeize(buf: []u8, text: []const u8) std.fmt.BufPrintError![]u8 {
     var bytes_written = 0;
     while (word_iterator.next()) |word| {
         if (requires_underscore) {
-            try buf_writer.writeByte('_');
+            try buf_writer.writeByte(separator);
             bytes_written += 1;
         }
         for (word) |c| {
@@ -191,22 +191,30 @@ pub fn bufSnakeize(buf: []u8, text: []const u8) std.fmt.BufPrintError![]u8 {
     return buf[0..bytes_written];
 }
 
-pub fn comptimeSnakeize(comptime text: []const u8) *const [snakeizeCount(text):0]u8 {
+fn comptimeDecamelize(comptime text: []const u8, separator: u8) *const [decamelizeCount(text):0]u8 {
     comptime {
-        var buf: [snakeizeCount(text):0]u8 = undefined;
-        _ = bufSnakeize(&buf, text) catch unreachable;
+        var buf: [decamelizeCount(text):0]u8 = undefined;
+        _ = bufDecamelize(&buf, text, separator) catch unreachable;
         buf[buf.len] = 0;
         const final = buf;
         return &final;
     }
 }
 
-pub fn tableizeCount(text: []const u8) usize {
-    return text.len + (pluralizeCount(text) - text.len) + (snakeizeCount(text) - text.len);
+fn comptimeSnakeize(comptime text: []const u8) *const [decamelizeCount(text):0]u8 {
+    return comptime comptimeDecamelize(text, '_');
+}
+
+fn tableizeCount(text: []const u8) usize {
+    return text.len + (pluralizeCount(text) - text.len) + (decamelizeCount(text) - text.len);
 }
 
 pub fn comptimeTableize(comptime text: []const u8) *const [tableizeCount(text):0]u8 {
     return comptimePluralize(comptimeSnakeize(text));
+}
+
+pub fn comptimeTitleize(comptime text: []const u8) *const [decamelizeCount(text):0]u8 {
+    return comptime comptimeDecamelize(text, ' ');
 }
 
 test comptimeTableize {
