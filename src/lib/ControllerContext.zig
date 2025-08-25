@@ -3,10 +3,12 @@ const std = @import("std");
 const httpz = @import("httpz");
 const pg = @import("pg");
 
+const Repo = @import("Repo.zig");
+
 pub fn ControllerContext(comptime App: type) type {
     return struct {
         app: *App,
-        db_conn: *pg.Conn,
+        repo: Repo,
         request: *httpz.Request,
         response: *httpz.Response,
         session: ?App.Session,
@@ -23,7 +25,7 @@ pub fn ControllerContext(comptime App: type) type {
 
             return .{
                 .app = app,
-                .db_conn = try app.pg_pool.acquire(),
+                .repo = Repo.init(response.arena, try app.pg_pool.acquire()),
                 .request = request,
                 .response = response,
                 .session = session,
@@ -144,7 +146,7 @@ pub fn ControllerContext(comptime App: type) type {
         }
 
         pub fn deinit(self: *@This()) void {
-            self.db_conn.release();
+            self.repo.deinit();
             self.* = undefined;
         }
     };

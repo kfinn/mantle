@@ -1,7 +1,7 @@
 const std = @import("std");
 
-const Asset = @import("./Asset.zig");
-const Walker = @import("./Walker.zig");
+const Asset = @import("Asset.zig");
+const Walker = @import("Walker.zig");
 
 pub fn main() !void {
     var gpa: std.heap.GeneralPurposeAllocator(.{}) = .init;

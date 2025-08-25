@@ -79,41 +79,6 @@ pub inline fn comptimeSingularize(comptime plural: []const u8) *const [singulari
     }
 }
 
-fn findIrregularInflectionFromSingular(singular: []const u8) ?IrregularInflection {
-    for (irregular_inflections) |irregular_inflection| {
-        if (std.mem.eql(u8, singular, irregular_inflection.singular)) {
-            return irregular_inflection;
-        }
-    }
-    return null;
-}
-
-fn pluralizeCount(plural: []const u8) usize {
-    if (findIrregularInflectionFromPlural(plural)) |irregular_inflection| {
-        return irregular_inflection.plural.len;
-    }
-    const suffix_inflection = findSuffixInflectionFromPlural(plural);
-    return plural.len - suffix_inflection.singular_suffix.len + suffix_inflection.plural_suffix.len;
-}
-
-fn bufPluralize(buf: []u8, plural: []const u8) std.fmt.BufPrintError![]u8 {
-    if (findIrregularInflectionFromPlural(plural)) |irregular_inflection| {
-        return std.fmt.bufPrint(buf, "{s}", .{irregular_inflection.plural});
-    }
-    const suffix_inflection = findSuffixInflectionFromPlural(plural);
-    return std.fmt.bufPrint(buf, "{s}{s}", .{ plural[0 .. plural.len - suffix_inflection.singular_suffix.len], suffix_inflection.plural_suffix });
-}
-
-inline fn comptimePluralize(comptime plural: []const u8) *const [pluralizeCount(plural):0]u8 {
-    comptime {
-        var buf: [pluralizeCount(plural):0]u8 = undefined;
-        _ = bufPluralize(&buf, plural) catch unreachable;
-        buf[buf.len] = 0;
-        const final = buf;
-        return &final;
-    }
-}
-
 const WordIterator = struct {
     const State = enum { acronym, word };
 
@@ -171,7 +136,7 @@ fn decamelizeCount(text: []const u8) usize {
     return text.len + words_count - 1;
 }
 
-fn bufDecamelize(buf: []u8, text: []const u8, separator: u8) std.fmt.BufPrintError![]u8 {
+fn bufHumanize(buf: []u8, text: []const u8) std.fmt.BufPrintError![]u8 {
     var word_iterator = WordIterator.init(text);
     var buf_stream = std.io.fixedBufferStream(buf);
     var buf_writer = buf_stream.writer();
@@ -179,7 +144,7 @@ fn bufDecamelize(buf: []u8, text: []const u8, separator: u8) std.fmt.BufPrintErr
     var bytes_written = 0;
     while (word_iterator.next()) |word| {
         if (requires_underscore) {
-            try buf_writer.writeByte(separator);
+            try buf_writer.writeByte(' ');
             bytes_written += 1;
         }
         for (word) |c| {
@@ -191,37 +156,21 @@ fn bufDecamelize(buf: []u8, text: []const u8, separator: u8) std.fmt.BufPrintErr
     return buf[0..bytes_written];
 }
 
-fn comptimeDecamelize(comptime text: []const u8, separator: u8) *const [decamelizeCount(text):0]u8 {
+pub fn comptimeHumanize(comptime text: []const u8) *const [decamelizeCount(text):0]u8 {
     comptime {
         var buf: [decamelizeCount(text):0]u8 = undefined;
-        _ = bufDecamelize(&buf, text, separator) catch unreachable;
+        _ = bufHumanize(&buf, text) catch unreachable;
         buf[buf.len] = 0;
         const final = buf;
         return &final;
     }
 }
 
-fn comptimeSnakeize(comptime text: []const u8) *const [decamelizeCount(text):0]u8 {
-    return comptime comptimeDecamelize(text, '_');
-}
-
-fn tableizeCount(text: []const u8) usize {
-    return text.len + (pluralizeCount(text) - text.len) + (decamelizeCount(text) - text.len);
-}
-
-pub fn comptimeTableize(comptime text: []const u8) *const [tableizeCount(text):0]u8 {
-    return comptimePluralize(comptimeSnakeize(text));
-}
-
-pub fn comptimeTitleize(comptime text: []const u8) *const [decamelizeCount(text):0]u8 {
-    return comptime comptimeDecamelize(text, ' ');
-}
-
-test comptimeTableize {
-    try std.testing.expectEqualStrings("users", comptime comptimeTableize("User"));
-    try std.testing.expectEqualStrings("user_groups", comptime comptimeTableize("userGroup"));
-    try std.testing.expectEqualStrings("user_groups", comptime comptimeTableize("UserGroup"));
-    try std.testing.expectEqualStrings("uri_preferences", comptime comptimeTableize("URIPreference"));
-    try std.testing.expectEqualStrings("user_uri_preferences", comptime comptimeTableize("UserURIPreference"));
-    try std.testing.expectEqualStrings("favorite_uris", comptime comptimeTableize("FavoriteURI"));
+test comptimeHumanize {
+    try std.testing.expectEqualStrings("user", comptime comptimeHumanize("User"));
+    try std.testing.expectEqualStrings("user group", comptime comptimeHumanize("userGroup"));
+    try std.testing.expectEqualStrings("user group", comptime comptimeHumanize("UserGroup"));
+    try std.testing.expectEqualStrings("uri preference", comptime comptimeHumanize("URIPreference"));
+    try std.testing.expectEqualStrings("user uri preference", comptime comptimeHumanize("UserURIPreference"));
+    try std.testing.expectEqualStrings("favorite uri", comptime comptimeHumanize("FavoriteURI"));
 }

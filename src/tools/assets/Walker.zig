@@ -1,5 +1,5 @@
 const std = @import("std");
-const Asset = @import("./Asset.zig");
+const Asset = @import("Asset.zig");
 
 allocator: std.mem.Allocator,
 dir: std.fs.Dir,
