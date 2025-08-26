@@ -75,7 +75,9 @@ pub fn Cli(comptime AppArgument: type) type {
                 const migration_file = try migrations_dir.createFile(migration_file_path, .{});
                 defer migration_file.close();
 
-                const writer = migration_file.writer();
+                var migration_file_writer_buffer: [1024]u8 = undefined;
+                var migration_file_writer = migration_file.writer(&migration_file_writer_buffer);
+                const writer = &migration_file_writer.interface;
 
                 try writer.print(
                     \\const std = @import("std");
@@ -94,6 +96,8 @@ pub fn Cli(comptime AppArgument: type) type {
                     \\}}
                     \\
                 , .{version});
+
+                try writer.flush();
             }
 
             pub fn @"db:migrate"(cli: *CliSelf, args: *std.process.ArgIterator) !void {
@@ -222,11 +226,14 @@ pub fn Cli(comptime AppArgument: type) type {
         };
 
         pub fn fatal(_: *const @This(), comptime format: []const u8, args: anytype) noreturn {
-            const std_err = std.io.getStdErr();
-            const std_err_writer = std_err.writer();
+            const std_err = std.fs.File.stderr();
+            var std_err_writer_buffer: [1024]u8 = undefined;
+            var std_err_writer = std_err.writer(&std_err_writer_buffer);
+            const writer = &std_err_writer.interface;
 
-            if (std_err_writer.print(format, args)) {} else |_| {}
-            if (std_err_writer.print("\n", .{})) {} else |_| {}
+            if (writer.print(format, args)) {} else |_| {}
+            if (writer.print("\n", .{})) {} else |_| {}
+            if (writer.flush()) {} else |_| {}
             std.process.exit(1);
         }
     };

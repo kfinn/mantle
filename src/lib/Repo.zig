@@ -70,11 +70,11 @@ pub fn all(self: *const @This(), comptime relation: type) ![]relationResultType(
         select.params(),
         .{ .allocator = self.allocator },
     );
-    var array_list: std.ArrayList(relationResultType(relation)) = .init(self.allocator);
+    var array_list: std.ArrayList(relationResultType(relation)) = .{};
     while (try result.next()) |row| {
-        try array_list.append(try row.to(relationResultType(relation), .{ .dupe = true }));
+        try array_list.append(self.allocator, try row.to(relationResultType(relation), .{ .dupe = true }));
     }
-    return try array_list.toOwnedSlice();
+    return try array_list.toOwnedSlice(self.allocator);
 }
 
 fn SelectFromRelation(comptime relation: type, comptime WhereParam: ?type, has_limit: bool) type {

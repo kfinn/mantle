@@ -1,6 +1,6 @@
 const std = @import("std");
 
-pub fn writeEscapedHtml(writer: anytype, unsafe_text: []const u8) @TypeOf(writer).Error!void {
+pub fn writeEscapedHtml(writer: *std.Io.Writer, unsafe_text: []const u8) std.Io.Writer.Error!void {
     for (unsafe_text) |character| {
         switch (character) {
             '\'' => try writer.writeAll("&#39;"),
@@ -13,7 +13,7 @@ pub fn writeEscapedHtml(writer: anytype, unsafe_text: []const u8) @TypeOf(writer
     }
 }
 
-pub fn writeEscapedUriComponent(writer: anytype, unsafe_text: []const u8) @TypeOf(writer).Error!void {
+pub fn writeEscapedUriComponent(writer: *std.Io.Writer, unsafe_text: []const u8) std.Io.Writer.Error!void {
     for (unsafe_text) |character| {
         switch (character) {
             'a'...'z', 'A'...'Z', '0'...'9', '_', '.', '-', '~' => try writer.writeByte(character),
@@ -65,7 +65,7 @@ fn countUnescapedUriComponent(escaped_uri_component: []const u8) UnescapeUriComp
     return count;
 }
 
-pub fn writeUnescapedUriComponent(writer: anytype, escaped_uri_component: []const u8) (UnescapeUriComponentError || @TypeOf(writer).Error)!void {
+pub fn writeUnescapedUriComponent(writer: *std.Io.Writer, escaped_uri_component: []const u8) (UnescapeUriComponentError || std.Io.Writer.Error)!void {
     var iterator = EscapedUriComponentIterator.init(escaped_uri_component);
     while (try iterator.next()) |byte| {
         try writer.writeByte(byte);
@@ -75,12 +75,12 @@ pub fn writeUnescapedUriComponent(writer: anytype, escaped_uri_component: []cons
 pub fn unescapeUriComponentAlloc(allocator: std.mem.Allocator, escaped_uri_component: []const u8) ![]const u8 {
     const size = try countUnescapedUriComponent(escaped_uri_component);
     const buf = try allocator.alloc(u8, size);
-    var fbs = std.io.fixedBufferStream(buf);
-    try writeUnescapedUriComponent(fbs.writer().any(), escaped_uri_component);
+    var writer = std.Io.Writer.fixed(buf);
+    try writeUnescapedUriComponent(&writer, escaped_uri_component);
     return buf;
 }
 
-pub fn writeEscapedFormEncodedComponent(writer: anytype, unsafe_text: []const u8) @TypeOf(writer).Error!void {
+pub fn writeEscapedFormEncodedComponent(writer: *std.Io.Writer, unsafe_text: []const u8) std.Io.Writer.Error!void {
     for (unsafe_text) |character| {
         switch (character) {
             'a'...'z', 'A'...'Z', '0'...'9', '_', '.', '-', '~' => try writer.writeByte(character),
@@ -90,7 +90,7 @@ pub fn writeEscapedFormEncodedComponent(writer: anytype, unsafe_text: []const u8
     }
 }
 
-pub fn writeEscapedHtmlAttribute(writer: anytype, unsafe_text: []const u8) @TypeOf(writer).Error!void {
+pub fn writeEscapedHtmlAttribute(writer: *std.Io.Writer, unsafe_text: []const u8) std.Io.Writer.Error!void {
     for (unsafe_text) |character| {
         switch (character) {
             '"' => try writer.writeAll("\\\""),

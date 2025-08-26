@@ -11,7 +11,7 @@ fn formDataPathCount(path: []const []const u8) usize {
     return count;
 }
 
-fn writeFormDataPath(writer: anytype, path: []const []const u8) @TypeOf(writer).Error!void {
+fn writeFormDataPath(writer: *std.Io.Writer, path: []const []const u8) std.Io.Writer.Error!void {
     for (path, 0..) |segment, index| {
         if (index > 0) {
             try writer.print("[{s}]", .{segment});
@@ -23,10 +23,9 @@ fn writeFormDataPath(writer: anytype, path: []const []const u8) @TypeOf(writer).
 
 fn comptimeFormDataPath(comptime path: []const []const u8) [formDataPathCount(path):0]u8 {
     var buffer: [formDataPathCount(path):0]u8 = undefined;
-    var stream = std.io.fixedBufferStream(&buffer);
-    const writer = stream.writer();
+    var writer = std.Io.Writer.fixed(&buffer);
 
-    writeFormDataPath(writer, path) catch unreachable;
+    writeFormDataPath(&writer, path) catch unreachable;
 
     buffer[buffer.len] = 0;
     return buffer;

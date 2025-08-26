@@ -23,28 +23,28 @@ pub fn Errors(FieldParam: type) type {
             var field_errors = std.EnumArray(Field, std.ArrayList(Error)).initUndefined();
             var field_errors_iterator = field_errors.iterator();
             while (field_errors_iterator.next()) |entry| {
-                field_errors.set(entry.key, .init(allocator));
+                field_errors.set(entry.key, .{});
             }
 
             return .{
                 .allocator = allocator,
-                .base_errors = .init(allocator),
+                .base_errors = .{},
                 .field_errors = field_errors,
             };
         }
 
         pub fn deinit(self: *@This()) void {
-            self.base_errors_builder.deinit();
-            for (self.field_errors_builder.values) |field_errors| {
-                field_errors.deinit();
+            self.base_errors.deinit(self.allocator);
+            for (self.field_errors.values) |field_errors| {
+                field_errors.deinit(self.allocator);
             }
         }
         pub fn addBaseError(self: *@This(), validation_error: Error) !void {
-            try self.base_errors.append(validation_error);
+            try self.base_errors.append(self.allocator, validation_error);
         }
 
         pub fn addFieldError(self: *@This(), field: Field, validation_error: Error) !void {
-            try self.field_errors.getPtr(field).append(validation_error);
+            try self.field_errors.getPtr(field).append(self.allocator, validation_error);
         }
 
         pub fn isInvalid(self: *const @This()) bool {

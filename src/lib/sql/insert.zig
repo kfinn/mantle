@@ -16,7 +16,7 @@ pub fn Insert(
 
         values: Values,
 
-        fn writeToSql(writer: anytype) @TypeOf(writer).Error!void {
+        fn writeToSql(writer: *std.Io.Writer) std.Io.Writer.Error!void {
             var next_placeholder: usize = 1;
             try writer.writeAll("INSERT");
             try into.writeToSql(writer);
@@ -59,17 +59,16 @@ pub fn Insert(
         }
 
         fn comptimeToSqlCount() usize {
-            var counting_writer = std.io.countingWriter(std.io.null_writer);
-            writeToSql(counting_writer.writer()) catch unreachable;
-            return counting_writer.bytes_written;
+            var discarding_writer = std.Io.Writer.Discarding.init(&.{});
+            writeToSql(&discarding_writer.writer) catch unreachable;
+            return discarding_writer.fullCount();
         }
 
         pub fn toSql() *const [comptimeToSqlCount():0]u8 {
             const sql: [comptimeToSqlCount():0]u8 = comptime sql: {
                 var buf: [comptimeToSqlCount():0]u8 = undefined;
-                var fixed_buffer_stream = std.io.fixedBufferStream(&buf);
-                const writer = fixed_buffer_stream.writer();
-                writeToSql(writer) catch unreachable;
+                var fixed_buffer_writer = std.Io.Writer.fixed(&buf);
+                writeToSql(&fixed_buffer_writer) catch unreachable;
                 buf[buf.len] = 0;
                 break :sql buf;
             };
@@ -93,7 +92,7 @@ const Into = struct {
         };
     }
 
-    pub fn writeToSql(self: *const @This(), writer: anytype) @TypeOf(writer).Error!void {
+    pub fn writeToSql(self: *const @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
         try writer.writeAll(" INTO");
         try escape.writeEscapedIdentifier(writer, self.table_name);
         if (self.alias) |alias| {

@@ -29,14 +29,18 @@ fn list(allocator: std.mem.Allocator, args: *std.process.ArgIterator) !void {
 
     const output_file = try std.fs.cwd().createFile(output_file_path, .{});
     defer output_file.close();
-    const output_file_writer = output_file.writer().any();
+
+    var output_file_buffer: [1024]u8 = undefined;
+    var output_file_writer = output_file.writer(&output_file_buffer);
+    const output_writer = &output_file_writer.interface;
 
     var walker = try Walker.init(allocator, assets_path);
     defer walker.deinit();
 
     while (try walker.next()) |asset| {
-        try output_file_writer.print("{s}\n", .{asset.path});
+        try output_writer.print("{s}\n", .{asset.path});
     }
+    try output_writer.flush();
 }
 
 fn generate(allocator: std.mem.Allocator, args: *std.process.ArgIterator) !void {
@@ -72,25 +76,29 @@ fn generate(allocator: std.mem.Allocator, args: *std.process.ArgIterator) !void 
 
     var dependencies_file = try std.fs.cwd().createFile(dependencies_file_path, .{});
     defer dependencies_file.close();
-    var depenencies_file_buffered_writer = std.io.bufferedWriter(dependencies_file.writer());
-    const dependencies_file_writer = depenencies_file_buffered_writer.writer().any();
 
-    try dependencies_file_writer.writeAll("assets:");
+    var dependencies_file_buffer: [1024]u8 = undefined;
+    var dependencies_file_writer = dependencies_file.writer(&dependencies_file_buffer);
+    const dependencies_writer = &dependencies_file_writer.interface;
+
+    try dependencies_writer.writeAll("assets:");
 
     var output_file = try std.fs.cwd().createFile(output_zig_path, .{});
     defer output_file.close();
-    var output_file_buffered_writer = std.io.bufferedWriter(output_file.writer());
-    const output_file_writer = output_file_buffered_writer.writer().any();
+
+    var output_file_buffer: [1024]u8 = undefined;
+    var output_file_writer = output_file.writer(&output_file_buffer);
+    const output_writer = &output_file_writer.interface;
 
     var digested_asset_paths_by_asset_path_iterator = digested_asset_paths_by_asset_path.iterator();
-    try output_file_writer.writeAll("const std = @import(\"std\");\n");
-    try output_file_writer.writeAll("pub const All = std.StaticStringMap(void).initComptime(.{\n");
+    try output_writer.writeAll("const std = @import(\"std\");\n");
+    try output_writer.writeAll("pub const All = std.StaticStringMap(void).initComptime(.{\n");
     while (digested_asset_paths_by_asset_path_iterator.next()) |entry| {
-        try output_file_writer.writeAll("    .{ \"/assets/");
-        try writeEscapedPath(output_file_writer, entry.value_ptr.*);
-        try output_file_writer.writeAll("\", .{} },\n");
+        try output_writer.writeAll("    .{ \"/assets/");
+        try writeEscapedPath(output_writer, entry.value_ptr.*);
+        try output_writer.writeAll("\", .{} },\n");
     }
-    try output_file_writer.writeAll("});\n");
+    try output_writer.writeAll("});\n");
 
     {
         var walker = try Walker.init(allocator, assets_path);
@@ -100,24 +108,24 @@ fn generate(allocator: std.mem.Allocator, args: *std.process.ArgIterator) !void 
             const path_with_digest = digested_asset_paths_by_asset_path.get(asset.path).?;
             try asset.install(output_dir, path_with_digest, &digested_asset_paths_by_asset_path, allocator);
 
-            try dependencies_file_writer.writeByte(' ');
-            try writeEscapedPath(dependencies_file_writer, assets_path);
-            try dependencies_file_writer.writeByte('/');
-            try writeEscapedPath(dependencies_file_writer, asset.path);
+            try dependencies_writer.writeByte(' ');
+            try writeEscapedPath(dependencies_writer, assets_path);
+            try dependencies_writer.writeByte('/');
+            try writeEscapedPath(dependencies_writer, asset.path);
 
-            try output_file_writer.writeAll("pub const @\"");
-            try writeEscapedPath(output_file_writer, asset.path);
-            try output_file_writer.writeAll("\" = \"/assets/");
-            try writeEscapedPath(output_file_writer, path_with_digest);
-            try output_file_writer.writeAll("\";\n");
+            try output_writer.writeAll("pub const @\"");
+            try writeEscapedPath(output_writer, asset.path);
+            try output_writer.writeAll("\" = \"/assets/");
+            try writeEscapedPath(output_writer, path_with_digest);
+            try output_writer.writeAll("\";\n");
         }
     }
 
-    try output_file_buffered_writer.flush();
-    try depenencies_file_buffered_writer.flush();
+    try output_writer.flush();
+    try dependencies_writer.flush();
 }
 
-fn writeEscapedPath(writer: anytype, path: []const u8) @TypeOf(writer).Error!void {
+fn writeEscapedPath(writer: *std.Io.Writer, path: []const u8) std.Io.Writer.Error!void {
     for (path) |c| {
         switch (c) {
             '\\' => try writer.writeAll("\\\\"),

@@ -133,7 +133,9 @@ fn installCss(
     var src_file = try self.dir.openFile(self.path, .{});
     defer src_file.close();
 
-    const reader = src_file.reader();
+    var src_file_reader_buffer: [1024]u8 = undefined;
+    var src_file_reader = src_file.reader(&src_file_reader_buffer);
+    const reader = &src_file_reader.interface;
 
     if (std.fs.path.dirname(dest_path)) |dest_dirname| {
         try dest_dir.makePath(dest_dirname);
@@ -142,7 +144,9 @@ fn installCss(
     var dest_file = try dest_dir.createFile(dest_path, .{});
     defer dest_file.close();
 
-    var writer = dest_file.writer();
+    var dest_file_writer_buffer: [1024]u8 = undefined;
+    var dest_file_writer = dest_file.writer(&dest_file_writer_buffer);
+    const writer = &dest_file_writer.interface;
 
     state: switch (State.plain) {
         .plain => {
@@ -210,8 +214,8 @@ fn installCss(
     }
 }
 
-fn readOptByte(reader: anytype) @TypeOf(reader).NoEofError!?u8 {
-    return reader.readByte() catch |err| {
+fn readOptByte(reader: *std.Io.Reader) !?u8 {
+    return reader.takeByte() catch |err| {
         switch (err) {
             error.EndOfStream => return null,
             else => return err,

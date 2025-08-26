@@ -6,7 +6,7 @@ pub fn escapedIdentifierCount(field: []const u8) usize {
     return counting_writer.bytes_written;
 }
 
-pub fn writeEscapedIdentifier(writer: anytype, field: []const u8) @TypeOf(writer).Error!void {
+pub fn writeEscapedIdentifier(writer: *std.Io.Writer, field: []const u8) std.Io.Writer.Error!void {
     try writer.writeByte('"');
     for (field) |c| {
         if (c == '"') {

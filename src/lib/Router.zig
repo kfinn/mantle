@@ -3,9 +3,9 @@ const assert = std.debug.assert;
 
 const httpz = @import("httpz");
 
+const cgi_escape = @import("cgi_escape.zig");
 const ControllerContext = @import("ControllerContext.zig").ControllerContext;
 const inflector = @import("inflector.zig");
-const cgi_escape = @import("cgi_escape.zig");
 
 const RouterError = error{unknown};
 

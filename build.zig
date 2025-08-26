@@ -21,31 +21,6 @@ pub fn build(b: *std.Build) void {
     });
     b.installArtifact(assets_exe);
 
-    const lib_static_mod = b.createModule(.{
-        .root_source_file = b.path("src/lib/root.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-
-    const httpz_mod = b.dependency("httpz", .{
-        .target = target,
-        .optimize = optimize,
-    }).module("httpz");
-    lib_static_mod.addImport("httpz", httpz_mod);
-
-    const pg_mod = b.dependency("pg", .{
-        .target = target,
-        .optimize = optimize,
-    }).module("pg");
-    lib_static_mod.addImport("pg", pg_mod);
-
-    const lib_static = b.addLibrary(.{
-        .name = "mantle",
-        .linkage = .static,
-        .root_module = lib_static_mod,
-    });
-    b.installArtifact(lib_static);
-
     const lib_unit_tests = b.addTest(.{
         .root_module = lib_mod,
     });

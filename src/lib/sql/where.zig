@@ -23,7 +23,7 @@ pub fn Where(comptime expression_param: []const u8, comptime ParamsParam: type, 
             return .{ .params = params };
         }
 
-        pub fn writeToSql(writer: anytype, next_placeholder: *usize) @TypeOf(writer).Error!void {
+        pub fn writeToSql(writer: *std.Io.Writer, next_placeholder: *usize) std.Io.Writer.Error!void {
             const State = enum {
                 init,
                 literal_value,
@@ -88,7 +88,7 @@ pub fn fromExpression(comptime expression: []const u8, params: anytype) Where(ex
     return .{ .params = params };
 }
 
-fn writeExpressionFromParams(writer: anytype, comptime Params: type) @TypeOf(writer).Error!void {
+fn writeExpressionFromParams(writer: *std.Io.Writer, comptime Params: type) std.Io.Writer.Error!void {
     var requires_leading_and = false;
     for (@typeInfo(Params).@"struct".fields) |field| {
         if (requires_leading_and) {
@@ -101,17 +101,16 @@ fn writeExpressionFromParams(writer: anytype, comptime Params: type) @TypeOf(wri
 }
 
 fn expressionFromParamsCount(comptime Params: type) usize {
-    var counting_writer = std.io.countingWriter(std.io.null_writer);
-    writeExpressionFromParams(counting_writer.writer(), Params) catch unreachable;
-    return counting_writer.bytes_written;
+    var discarding_writer = std.Io.Writer.Discarding.init(&.{});
+    writeExpressionFromParams(&discarding_writer.writer, Params) catch unreachable;
+    return discarding_writer.fullCount();
 }
 
 fn comptimeExpressionFromParams(comptime Params: type) *const [expressionFromParamsCount(Params):0]u8 {
     comptime {
         var buf: [expressionFromParamsCount(Params):0]u8 = undefined;
-        var stream = std.io.fixedBufferStream(&buf);
-        const writer = stream.writer();
-        writeExpressionFromParams(writer, Params) catch unreachable;
+        var writer = std.Io.Writer.fixed(&buf);
+        writeExpressionFromParams(&writer, Params) catch unreachable;
         buf[buf.len] = 0;
 
         const final = buf;

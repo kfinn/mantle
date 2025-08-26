@@ -93,14 +93,19 @@ pub fn ControllerContext(comptime App: type) type {
                 return;
             };
 
-            var session_zon_buf = std.ArrayList(u8).init(self.response.arena);
-            try std.zon.stringify.serialize(session, .{
-                .whitespace = false,
-                .emit_default_optional_fields = false,
-            }, session_zon_buf.writer());
-            const session_zon = try session_zon_buf.toOwnedSlice();
+            var session_zon_writer: std.Io.Writer.Allocating = .init(self.request.arena);
+            try std.zon.stringify.serialize(
+                session,
+                .{
+                    .whitespace = false,
+                    .emit_default_optional_fields = false,
+                },
+                &session_zon_writer.writer,
+            );
+            var session_zon = session_zon_writer.toArrayList();
+            defer session_zon.deinit(self.request.arena);
 
-            const encrypted_session_zon = try self.response.arena.alloc(u8, session_zon.len);
+            const encrypted_session_zon = try self.response.arena.alloc(u8, session_zon.items.len);
 
             var tag: [std.crypto.aead.aes_gcm.Aes256Gcm.tag_length]u8 = undefined;
 
@@ -110,7 +115,7 @@ pub fn ControllerContext(comptime App: type) type {
             std.crypto.aead.aes_gcm.Aes256Gcm.encrypt(
                 encrypted_session_zon,
                 &tag,
-                session_zon,
+                session_zon.items,
                 "",
                 nonce,
                 self.app.config.session.cookie_secret_key.*,
