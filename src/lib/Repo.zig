@@ -108,7 +108,8 @@ fn selectFromRelation(comptime relation: type, where: anytype, comptime opt_limi
 
 pub fn create(self: *const @This(), comptime relation: type, values: anytype) !relationResultType(relation) {
     if (std.meta.hasFn(relation, "validate")) {
-        const errors = try relation.validate(self.allocator, values);
+        var errors: validation.RecordErrors(@TypeOf(values)) = .init(self.allocator);
+        try relation.validate(values, &errors);
         if (errors.isInvalid()) {
             return error.RecordInvalid;
         }

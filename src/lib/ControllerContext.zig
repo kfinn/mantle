@@ -13,6 +13,7 @@ pub fn ControllerContext(comptime App: type) type {
         response: *httpz.Response,
         session: ?App.Session,
         session_parse_error: ?anyerror,
+        helpers: App.controller_helpers = .{},
 
         pub fn init(app: *App, request: *httpz.Request, response: *httpz.Response) !@This() {
             var session_parse_error: ?anyerror = null;

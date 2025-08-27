@@ -258,6 +258,8 @@ pub fn Router(comptime App: type, comptime comptime_options: ComptimeOptions) ty
                 try @field(Controller, action_name)(&context, controller_params);
             }
             try context.afterAction();
+
+            std.log.info("{s}#{s} responded with status {d}", .{ @typeName(Controller), action_name, response.status });
         }
 
         fn handleAssets(_: *const @This(), request: *httpz.Request, response: *httpz.Response) !bool {

@@ -1,17 +1,18 @@
-const httpz = @import("httpz");
 const std = @import("std");
+
+const httpz = @import("httpz");
 const pg = @import("pg");
 
+const controller_context = @import("ControllerContext.zig");
 const router_module = @import("Router.zig");
 const Router = router_module.Router;
-
-const controller_context = @import("ControllerContext.zig");
 
 pub const ComptimeOptions = struct {
     router: router_module.ComptimeOptions,
     Session: type = struct {},
     migrations: []const type = &[_]type{},
     tasks: []const type = &[_]type{},
+    controller_helpers: type = struct {},
 };
 
 pub const Config = struct {
@@ -46,6 +47,7 @@ pub fn App(comptime comptime_options: ComptimeOptions) type {
         pub const Session = comptime_options.Session;
         pub const migrations = sorted_migrations;
         pub const tasks = comptime_options.tasks;
+        pub const controller_helpers = comptime_options.controller_helpers;
 
         pub fn init(allocator: std.mem.Allocator, config: Config) !@This() {
             return .{
