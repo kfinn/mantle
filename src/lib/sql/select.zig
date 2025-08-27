@@ -3,6 +3,7 @@ const std = @import("std");
 const escape = @import("escape.zig");
 const Output = @import("Output.zig");
 const where = @import("where.zig");
+const meta = @import("../meta.zig");
 
 pub const From = struct {
     expression: []const u8,
@@ -127,13 +128,7 @@ pub fn Select(
             if (!has_limit) {
                 return self.where.params;
             }
-
-            var result: Params = undefined;
-            inline for (0..self.where.params.len) |index| {
-                result[index] = self.where.params[index];
-            }
-            result[self.where.params.len] = self.limit;
-            return result;
+            return meta.mergeTuples(self.where.params, .{self.limit});
         }
     };
 }

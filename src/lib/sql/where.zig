@@ -3,24 +3,15 @@ const std = @import("std");
 const meta = @import("../meta.zig");
 const sql_escape = @import("escape.zig");
 
-pub fn Where(comptime expression_param: []const u8, comptime ParamsParam: type, comptime children_param: ?struct { type, type }) type {
+pub fn Where(comptime expression_param: []const u8, comptime ParamsParam: type) type {
     return struct {
-        pub const children: ?struct { type, type } = children_param;
         pub const expression = expression_param;
         pub const Params = ParamsParam;
 
         params: Params,
 
-        pub fn merge(lhs: anytype, rhs: anytype, comptime operator: []const u8) Merged(@TypeOf(lhs), @TypeOf(rhs), operator) {
-            const params: Merged(@TypeOf(lhs), @TypeOf(rhs)).Params = undefined;
-            inline for (@typeInfo(lhs.Params).@"struct".fields) |field| {
-                @field(params, field.name) = @field(lhs.params, field.name);
-            }
-            inline for (@typeInfo(rhs.Params).@"struct".fields, 0..) |field, field_index| {
-                @field(params, std.fmt.comptimePrint("{d}", .{field_index + lhs.params.len})) = @field(rhs, field.name);
-            }
-
-            return .{ .params = params };
+        pub fn merge(self: *const @This(), rhs: anytype, comptime operator: []const u8) Merged(@This(), @TypeOf(rhs), operator) {
+            return .{ .params = meta.mergeTuples(self.params, rhs.params) };
         }
 
         pub fn writeToSql(writer: *std.Io.Writer, next_placeholder: *usize) std.Io.Writer.Error!void {
@@ -80,11 +71,12 @@ pub fn Where(comptime expression_param: []const u8, comptime ParamsParam: type, 
                 try writer.print("${d}", .{next_placeholder.*});
                 next_placeholder.* += 1;
             }
+            try writer.writeByte(' ');
         }
     };
 }
 
-pub fn fromExpression(comptime expression: []const u8, params: anytype) Where(expression, @TypeOf(params), null) {
+pub fn fromExpression(comptime expression: []const u8, params: anytype) Where(expression, @TypeOf(params)) {
     return .{ .params = params };
 }
 
@@ -122,7 +114,6 @@ pub fn FromParams(comptime Params: type) type {
     return Where(
         comptimeExpressionFromParams(Params),
         meta.TupleFromStruct(Params),
-        null,
     );
 }
 
@@ -130,19 +121,9 @@ pub fn fromParams(params: anytype) FromParams(@TypeOf(params)) {
     return .{ .params = meta.structToTuple(params) };
 }
 
-fn MergedParams(comptime LhsParams: type, comptime RhsParams: type) type {
-    return @Type(.{ .@"struct" = .{
-        .layout = .auto,
-        .fields = @typeInfo(LhsParams).@"struct".fields ++ @typeInfo(RhsParams).@"struct".fields,
-        .decls = &[_]std.builtin.Type.Declaration{},
-        .is_tuple = true,
-    } });
-}
-
 pub fn Merged(comptime Lhs: type, comptime Rhs: type, comptime operator: []const u8) type {
     return Where(
         "(" ++ Lhs.expression ++ ") " ++ operator ++ " (" ++ Rhs.expression ++ ")",
-        struct { lhs_params: Lhs.Params, rhs_params: Rhs.Params },
-        .{ Lhs, Rhs },
+        meta.MergedTuples(Lhs.Params, Rhs.Params),
     );
 }

@@ -74,7 +74,6 @@ pub fn install(
     dest_dir: std.fs.Dir,
     dest_path: []const u8,
     digested_asset_paths_by_asset_path: *const std.StringHashMap([]const u8),
-    allocator: std.mem.Allocator,
 ) !void {
     if (digested_asset_paths_by_asset_path.count() == 0) {
         try self.installWithoutTransforming(dest_dir, dest_path);
@@ -86,7 +85,6 @@ pub fn install(
             dest_dir,
             dest_path,
             digested_asset_paths_by_asset_path,
-            allocator,
         );
     } else {
         try self.installWithoutTransforming(dest_dir, dest_path);
@@ -109,7 +107,6 @@ fn installCss(
     dest_dir: std.fs.Dir,
     dest_path: []const u8,
     digested_asset_paths_by_asset_path: *const std.StringHashMap([]const u8),
-    allocator: std.mem.Allocator,
 ) !void {
     var max_asset_path_len: usize = 0;
     var asset_paths_iterator = digested_asset_paths_by_asset_path.keyIterator();
@@ -117,15 +114,8 @@ fn installCss(
         max_asset_path_len = @max(asset_path.len, max_asset_path_len);
     }
 
-    var url_buf = try allocator.alloc(u8, max_asset_path_len);
-    defer allocator.free(url_buf);
-    var url_len: usize = 0;
-
     const State = enum {
         plain,
-        u,
-        ur,
-        url,
         @"url(",
         eof,
     };
@@ -150,75 +140,41 @@ fn installCss(
 
     state: switch (State.plain) {
         .plain => {
-            const c = try readOptByte(reader) orelse continue :state .eof;
-            try writer.writeByte(c);
-            switch (c) {
-                'u' => continue :state .u,
-                else => continue :state .plain,
-            }
-        },
-        .u => {
-            const c = try readOptByte(reader) orelse continue :state .eof;
-            try writer.writeByte(c);
-            switch (c) {
-                'r' => continue :state .ur,
-                else => continue :state .plain,
-            }
-        },
-        .ur => {
-            const c = try readOptByte(reader) orelse continue :state .eof;
-            try writer.writeByte(c);
-            switch (c) {
-                'l' => continue :state .url,
-                else => continue :state .plain,
-            }
-        },
-        .url => {
-            const c = try readOptByte(reader) orelse continue :state .eof;
-            try writer.writeByte(c);
-            switch (c) {
-                '(' => continue :state .@"url(",
-                else => continue :state .plain,
+            _ = reader.streamDelimiter(writer, 'u') catch |err| switch (err) {
+                error.EndOfStream => continue :state .eof,
+                else => return err,
+            };
+            const url_start_token = "url(";
+            const peek = reader.peek(url_start_token.len) catch |err| switch (err) {
+                error.EndOfStream => {
+                    _ = try reader.streamRemaining(writer);
+                    continue :state .eof;
+                },
+                else => return err,
+            };
+            if (std.mem.eql(u8, peek, url_start_token)) {
+                reader.toss(url_start_token.len);
+                try writer.writeAll(url_start_token);
+                continue :state .@"url(";
+            } else {
+                reader.toss(1);
+                try writer.writeByte('u');
+                continue :state .plain;
             }
         },
         .@"url(" => {
-            const c = try readOptByte(reader) orelse continue :state .eof;
-            switch (c) {
-                ')' => {
-                    const url = url_buf[0..url_len];
-                    if (digested_asset_paths_by_asset_path.get(url)) |digested_asset_path| {
-                        try writer.writeAll(digested_asset_path);
-                    } else {
-                        try writer.writeAll(url);
-                    }
-                    try writer.writeByte(')');
-                    url_len = 0;
-                    continue :state .plain;
-                },
-                else => {
-                    if (url_len < url_buf.len) {
-                        url_buf[url_len] = c;
-                        url_len += 1;
-                        continue :state .@"url(";
-                    } else {
-                        try writer.writeAll(url_buf);
-                        url_len = 0;
-                        continue :state .plain;
-                    }
-                },
+            const url = try reader.takeDelimiterExclusive(')');
+            if (digested_asset_paths_by_asset_path.get(url)) |digested_asset_path| {
+                try writer.writeAll(digested_asset_path);
+            } else {
+                try writer.writeAll(url);
             }
+            continue :state .plain;
         },
         .eof => {
             try writer.print("\n\n/*# sourceMappingURL={s} */\n", .{self.path});
         },
     }
-}
 
-fn readOptByte(reader: *std.Io.Reader) !?u8 {
-    return reader.takeByte() catch |err| {
-        switch (err) {
-            error.EndOfStream => return null,
-            else => return err,
-        }
-    };
+    try writer.flush();
 }

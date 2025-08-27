@@ -2,27 +2,29 @@ const std = @import("std");
 
 const meta = @import("../meta.zig");
 const escape = @import("escape.zig");
-const Output = @import("Output.zig");
 const Into = @import("Into.zig");
+const Output = @import("Output.zig");
 
-pub fn Insert(
+pub fn Update(
     comptime into_param: Into,
     comptime ValuesParam: type,
+    comptime WhereParam: type,
     comptime returning_param: []const Output,
 ) type {
     return struct {
         pub const into = into_param;
         pub const Values = ValuesParam;
+        pub const Where = WhereParam;
         pub const returning = returning_param;
 
         values: Values,
+        where: Where,
 
         fn writeToSql(writer: *std.Io.Writer) std.Io.Writer.Error!void {
             var next_placeholder: usize = 1;
-            try writer.writeAll("INSERT INTO ");
+            try writer.writeAll("UPDATE ");
             try into.writeToSql(writer);
-            try writer.writeAll(" (");
-
+            try writer.writeAll("SET ");
             const values_fields = @typeInfo(Values).@"struct".fields;
             {
                 var requires_comma = false;
@@ -31,22 +33,14 @@ pub fn Insert(
                         try writer.writeAll(", ");
                     }
                     try escape.writeEscapedIdentifier(writer, field.name);
-                    requires_comma = true;
-                }
-            }
-            try writer.writeAll(") VALUES (");
-            {
-                var requires_comma = false;
-                for (values_fields) |_| {
-                    if (requires_comma) {
-                        try writer.writeAll(", ");
-                    }
-                    try writer.print("${d}", .{next_placeholder});
+                    try writer.print(" = ${d}", .{next_placeholder});
                     next_placeholder += 1;
                     requires_comma = true;
                 }
             }
-            try writer.writeAll(") RETURNING ");
+            try writer.writeAll(" WHERE ");
+            try Where.writeToSql(writer, &next_placeholder);
+            try writer.writeAll("RETURNING ");
             {
                 var requires_comma = false;
                 for (returning) |output| {
@@ -76,8 +70,11 @@ pub fn Insert(
             return &sql;
         }
 
-        pub fn params(self: *const @This()) meta.TupleFromStruct(Values) {
-            return meta.structToTuple(self.values);
+        pub fn params(self: *const @This()) meta.MergedTuples(meta.TupleFromStruct(Values), Where.Params) {
+            return meta.mergeTuples(
+                meta.structToTuple(self.values),
+                self.where.params,
+            );
         }
     };
 }

@@ -17,16 +17,21 @@ pub fn deinit(self: *@This()) void {
     self.conn.release();
 }
 
-inline fn primaryKeyType(relation: anytype) type {
-    for (@typeInfo(relation).@"struct".fields) |field| {
-        if (std.mem.eql(u8, field.name, "id")) {
+fn isPrimaryKey(relation: type, field_name: []const u8) bool {
+    _ = relation;
+    return std.mem.eql(u8, field_name, "id");
+}
+
+fn primaryKeyType(relation: type) type {
+    for (@typeInfo(relationResultType(relation)).@"struct".fields) |field| {
+        if (isPrimaryKey(relation, field.name)) {
             return field.type;
         }
     }
     unreachable;
 }
 
-inline fn relationResultType(comptime relation: type) type {
+fn relationResultType(comptime relation: type) type {
     return relation.Record;
 }
 
@@ -42,38 +47,44 @@ fn relativeTypeName(type_name: [:0]const u8) [:0]const u8 {
 
 pub fn find(self: *const @This(), comptime relation: type, id: primaryKeyType(relation)) !relationResultType(relation) {
     const select = selectFromRelation(relation, sql.where.fromExpression("id = ?", .{id}), 1);
-    const row = try self.conn.rowOpts(
+    var row = try self.conn.rowOpts(
         @TypeOf(select).toSql(),
         select.params(),
         .{ .allocator = self.allocator },
     ) orelse return error.NotFound;
-    return try row.to(relationResultType(relation), .{});
+
+    const result = try row.to(relationResultType(relation), .{ .dupe = true, .allocator = self.allocator });
+    try row.deinit();
+    return result;
 }
 
 pub fn findBy(self: *const @This(), comptime relation: type, params: anytype) !?relationResultType(relation) {
     const select = selectFromRelation(relation, sql.where.fromParams(params), 1);
-    const opt_row = try self.conn.rowOpts(
+    var opt_row = try self.conn.rowOpts(
         @TypeOf(select).toSql(),
         select.params(),
         .{ .allocator = self.allocator },
     );
-    if (opt_row) |row| {
-        return try row.to(relationResultType(relation), .{});
+    if (opt_row) |*row| {
+        const result = try row.to(relationResultType(relation), .{ .dupe = true, .allocator = self.allocator });
+        try row.deinit();
+        return result;
     }
     return null;
 }
 
 pub fn all(self: *const @This(), comptime relation: type) ![]relationResultType(relation) {
-    const select = selectFromRelation(relation, sql.where.Where("TRUE", std.meta.Tuple(&[_]type{}), null){ .params = .{} }, null);
-    const result = try self.conn.queryOpts(
+    const select = selectFromRelation(relation, sql.where.Where("TRUE", std.meta.Tuple(&[_]type{})){ .params = .{} }, null);
+    var result = try self.conn.queryOpts(
         @TypeOf(select).toSql(),
         select.params(),
         .{ .allocator = self.allocator },
     );
     var array_list: std.ArrayList(relationResultType(relation)) = .{};
     while (try result.next()) |row| {
-        try array_list.append(self.allocator, try row.to(relationResultType(relation), .{ .dupe = true }));
+        try array_list.append(self.allocator, try row.to(relationResultType(relation), .{ .dupe = true, .allocator = self.allocator }));
     }
+    result.deinit();
     return try array_list.toOwnedSlice(self.allocator);
 }
 
@@ -90,7 +101,7 @@ fn SelectFromRelation(comptime relation: type, comptime WhereParam: ?type, has_l
     return sql.select.Select(
         &outputs,
         if (@hasField(relation, "from")) relation.from else .fromTable(relativeTypeName(@typeName(relation))),
-        WhereParam orelse sql.where.Where("true", struct {}, false),
+        WhereParam orelse sql.where.Where("TRUE", std.meta.Tuple(&[_]type{})),
         has_limit,
     );
 }
@@ -117,12 +128,14 @@ pub fn create(self: *const @This(), comptime relation: type, values: anytype) !r
 
     const insert = insertFromRelation(relation, values);
 
-    const row = try self.conn.rowOpts(
+    var row = try self.conn.rowOpts(
         @TypeOf(insert).toSql(),
         insert.params(),
         .{ .allocator = self.allocator },
     ) orelse return error.UnknownInsertError;
-    return try row.to(relationResultType(relation), .{});
+    const result = try row.to(relationResultType(relation), .{ .dupe = true, .allocator = self.allocator });
+    try row.deinit();
+    return result;
 }
 
 fn InsertFromRelation(comptime relation: type, comptime ValuesParam: type) type {
@@ -142,4 +155,76 @@ fn InsertFromRelation(comptime relation: type, comptime ValuesParam: type) type 
 
 fn insertFromRelation(comptime relation: type, values: anytype) InsertFromRelation(relation, @TypeOf(values)) {
     return .{ .values = values };
+}
+
+pub fn update(self: *const @This(), comptime relation: type, values: anytype) !relationResultType(relation) {
+    if (std.meta.hasFn(relation, "validate")) {
+        var errors: validation.RecordErrors(@TypeOf(values)) = .init(self.allocator);
+        try relation.validate(values, &errors);
+        if (errors.isInvalid()) {
+            return error.RecordInvalid;
+        }
+    }
+
+    const sql_update = updateFromRelation(relation, values);
+
+    var row = try self.conn.rowOpts(
+        @TypeOf(sql_update).toSql(),
+        sql_update.params(),
+        .{ .allocator = self.allocator },
+    ) orelse return error.UnknownUpdateError;
+
+    const result = try row.to(relationResultType(relation), .{ .dupe = true, .allocator = self.allocator });
+    try row.deinit();
+    return result;
+}
+
+fn UpdateFromRelation(comptime relation: type, comptime Values: type) type {
+    const relation_fields = @typeInfo(relationResultType(relation)).@"struct".fields;
+    var returning_buf: [relation_fields.len]sql.Output = undefined;
+    for (relation_fields, 0..) |field, index| {
+        returning_buf[index] = .fromColumn(field.name);
+    }
+    const returning = returning_buf;
+
+    return sql.update.Update(
+        if (@hasField(relation, "from")) relation.from else .fromTable(relativeTypeName(@typeName(relation))),
+        ValuesWithoutPrimaryKey(relation, Values),
+        sql.where.Where("id = ?", struct { primaryKeyType(relation) }),
+        &returning,
+    );
+}
+
+fn updateFromRelation(comptime relation: type, values: anytype) UpdateFromRelation(relation, @TypeOf(values)) {
+    return .{
+        .values = valuesWithoutPrimaryKey(relation, values),
+        .where = .{ .params = .{values.id} },
+    };
+}
+
+fn ValuesWithoutPrimaryKey(comptime relation: type, comptime Values: type) type {
+    const fields = @typeInfo(Values).@"struct".fields;
+    var fields_without_primary_key: [fields.len - 1]std.builtin.Type.StructField = undefined;
+    var next_field_without_primary_key_index = 0;
+    for (fields) |field| {
+        if (isPrimaryKey(relation, field.name)) {
+            continue;
+        }
+        fields_without_primary_key[next_field_without_primary_key_index] = field;
+        next_field_without_primary_key_index += 1;
+    }
+    return @Type(.{ .@"struct" = .{
+        .layout = .auto,
+        .fields = &fields_without_primary_key,
+        .decls = &[_]std.builtin.Type.Declaration{},
+        .is_tuple = false,
+    } });
+}
+
+fn valuesWithoutPrimaryKey(comptime relation: type, values: anytype) ValuesWithoutPrimaryKey(relation, @TypeOf(values)) {
+    var values_without_primary_key: ValuesWithoutPrimaryKey(relation, @TypeOf(values)) = undefined;
+    inline for (comptime std.meta.fieldNames(@TypeOf(values_without_primary_key))) |field_name| {
+        @field(values_without_primary_key, field_name) = @field(values, field_name);
+    }
+    return values_without_primary_key;
 }

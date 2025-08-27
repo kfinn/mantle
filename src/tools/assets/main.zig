@@ -106,7 +106,11 @@ fn generate(allocator: std.mem.Allocator, args: *std.process.ArgIterator) !void 
 
         while (try walker.next()) |asset| {
             const path_with_digest = digested_asset_paths_by_asset_path.get(asset.path).?;
-            try asset.install(output_dir, path_with_digest, &digested_asset_paths_by_asset_path, allocator);
+            try asset.install(
+                output_dir,
+                path_with_digest,
+                &digested_asset_paths_by_asset_path,
+            );
 
             try dependencies_writer.writeByte(' ');
             try writeEscapedPath(dependencies_writer, assets_path);
