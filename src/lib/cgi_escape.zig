@@ -1,14 +1,15 @@
 const std = @import("std");
 
-pub fn writeEscapedHtml(writer: *std.Io.Writer, unsafe_text: []const u8) std.Io.Writer.Error!void {
-    for (unsafe_text) |character| {
-        switch (character) {
+pub fn writeEscapedHtml(writer: *std.Io.Writer, unsafe_text: []const u8) !void {
+    var utf8 = (try std.unicode.Utf8View.init(unsafe_text)).iterator();
+    while (utf8.nextCodepoint()) |codepoint| {
+        switch (codepoint) {
             '\'' => try writer.writeAll("&#39;"),
             '&' => try writer.writeAll("&amp;"),
             '"' => try writer.writeAll("&quot;"),
             '<' => try writer.writeAll("&lt;"),
             '>' => try writer.writeAll("&gt;"),
-            else => try writer.writeByte(character),
+            else => try writer.printUnicodeCodepoint(codepoint),
         }
     }
 }

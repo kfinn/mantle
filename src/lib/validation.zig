@@ -10,7 +10,15 @@ pub const Error = struct {
 };
 
 pub fn RecordErrors(Record: type) type {
-    return Errors(std.meta.FieldEnum(Record));
+    switch (@typeInfo(Record)) {
+        .pointer => |pointer| {
+            return Errors(std.meta.FieldEnum(pointer.child));
+        },
+        .@"struct" => {
+            return Errors(std.meta.FieldEnum(Record));
+        },
+        else => unreachable,
+    }
 }
 
 pub fn Errors(FieldParam: type) type {

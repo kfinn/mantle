@@ -11,16 +11,17 @@ pub fn ControllerContext(comptime App: type) type {
         repo: Repo,
         request: *httpz.Request,
         response: *httpz.Response,
-        session: ?App.Session,
+        session: App.Session,
         session_parse_error: ?anyerror,
         helpers: App.controller_helpers = .{},
 
         pub fn init(app: *App, request: *httpz.Request, response: *httpz.Response) !@This() {
             var session_parse_error: ?anyerror = null;
-            var session: ?App.Session = null;
+            var session: App.Session = undefined;
             if (parseSession(app, request)) |parsed_session| {
                 session = parsed_session;
             } else |err| {
+                session = .{};
                 session_parse_error = err;
             }
 
@@ -90,13 +91,9 @@ pub fn ControllerContext(comptime App: type) type {
         }
 
         pub fn afterAction(self: *@This()) !void {
-            const session = self.session orelse {
-                return;
-            };
-
             var session_zon_writer: std.Io.Writer.Allocating = .init(self.request.arena);
             try std.zon.stringify.serialize(
-                session,
+                self.session,
                 .{
                     .whitespace = false,
                     .emit_default_optional_fields = false,

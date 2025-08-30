@@ -251,6 +251,7 @@ pub fn main(allocator: std.mem.Allocator, app: anytype, httpz_config: httpz.Conf
 }
 
 const db_migrate_advisory_lock_key = db_migrate_advisory_lock_key: {
+    // TODO: think through whether this seed matters for security reasons
     var hasher: std.hash.XxHash32 = .init(7);
     hasher.update("db:migrate");
     break :db_migrate_advisory_lock_key hasher.final();
