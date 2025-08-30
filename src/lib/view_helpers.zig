@@ -138,6 +138,7 @@ pub fn writeInput(writer: *std.Io.Writer, name: []const u8, value: []const u8, o
         "input",
         .{
             .name = name,
+            .id = name,
             .value = value,
             .autofocus = options.autofocus,
             .type = options.type,
