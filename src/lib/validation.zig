@@ -35,7 +35,7 @@ pub fn Errors(FieldParam: type) type {
 
         pub fn deinit(self: *@This()) void {
             self.base_errors.deinit(self.allocator);
-            for (self.field_errors.values) |field_errors| {
+            for (self.field_errors.values) |*field_errors| {
                 field_errors.deinit(self.allocator);
             }
         }

@@ -7,17 +7,17 @@ const Output = @import("Output.zig");
 
 pub fn Update(
     comptime into_param: Into,
-    comptime ValuesParam: type,
+    comptime ChangeSetParam: type,
     comptime WhereParam: type,
     comptime returning_param: []const Output,
 ) type {
     return struct {
         pub const into = into_param;
-        pub const Values = ValuesParam;
+        pub const ChangeSet = ChangeSetParam;
         pub const Where = WhereParam;
         pub const returning = returning_param;
 
-        values: Values,
+        change_set: ChangeSet,
         where: Where,
 
         fn writeToSql(writer: *std.Io.Writer) std.Io.Writer.Error!void {
@@ -25,10 +25,10 @@ pub fn Update(
             try writer.writeAll("UPDATE ");
             try into.writeToSql(writer);
             try writer.writeAll("SET ");
-            const values_fields = @typeInfo(Values).@"struct".fields;
+            const change_set_fields = @typeInfo(ChangeSet).@"struct".fields;
             {
                 var requires_comma = false;
-                for (values_fields) |field| {
+                for (change_set_fields) |field| {
                     if (requires_comma) {
                         try writer.writeAll(", ");
                     }
@@ -70,9 +70,9 @@ pub fn Update(
             return &sql;
         }
 
-        pub fn params(self: *const @This()) meta.MergedTuples(meta.TupleFromStruct(Values), Where.Params) {
+        pub fn params(self: *const @This()) meta.MergedTuples(meta.TupleFromStruct(ChangeSet), Where.Params) {
             return meta.mergeTuples(
-                meta.structToTuple(self.values),
+                meta.structToTuple(self.change_set),
                 self.where.params,
             );
         }

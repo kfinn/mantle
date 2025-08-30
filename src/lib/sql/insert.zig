@@ -7,15 +7,15 @@ const Into = @import("Into.zig");
 
 pub fn Insert(
     comptime into_param: Into,
-    comptime ValuesParam: type,
+    comptime ChangeSetParam: type,
     comptime returning_param: []const Output,
 ) type {
     return struct {
         pub const into = into_param;
-        pub const Values = ValuesParam;
+        pub const ChangeSet = ChangeSetParam;
         pub const returning = returning_param;
 
-        values: Values,
+        change_set: ChangeSet,
 
         fn writeToSql(writer: *std.Io.Writer) std.Io.Writer.Error!void {
             var next_placeholder: usize = 1;
@@ -23,10 +23,10 @@ pub fn Insert(
             try into.writeToSql(writer);
             try writer.writeAll(" (");
 
-            const values_fields = @typeInfo(Values).@"struct".fields;
+            const change_set_fields = @typeInfo(ChangeSet).@"struct".fields;
             {
                 var requires_comma = false;
-                for (values_fields) |field| {
+                for (change_set_fields) |field| {
                     if (requires_comma) {
                         try writer.writeAll(", ");
                     }
@@ -37,7 +37,7 @@ pub fn Insert(
             try writer.writeAll(") VALUES (");
             {
                 var requires_comma = false;
-                for (values_fields) |_| {
+                for (change_set_fields) |_| {
                     if (requires_comma) {
                         try writer.writeAll(", ");
                     }
@@ -76,8 +76,8 @@ pub fn Insert(
             return &sql;
         }
 
-        pub fn params(self: *const @This()) meta.TupleFromStruct(Values) {
-            return meta.structToTuple(self.values);
+        pub fn params(self: *const @This()) meta.TupleFromStruct(ChangeSet) {
+            return meta.structToTuple(self.change_set);
         }
     };
 }
