@@ -119,15 +119,21 @@ fn CreateResult(comptime relation: type, comptime ChangeSet: type) type {
 }
 
 pub fn create(self: *const @This(), comptime relation: type, change_set: anytype) !CreateResult(relation, @TypeOf(change_set)) {
+    var errors: validation.RecordErrors(@TypeOf(change_set)) = .init(self.allocator);
+    const insert = try self.insertFromRelation(relation, change_set, &errors) orelse return .{ .failure = errors };
+
     if (std.meta.hasFn(relation, "validate")) {
-        var errors: validation.RecordErrors(@TypeOf(change_set)) = .init(self.allocator);
-        try relation.validate(change_set, &errors);
-        if (errors.isInvalid()) {
-            return .{ .failure = errors };
+        var errors_after_cast: validation.RecordErrors(@TypeOf(insert.change_set)) = .init(self.allocator);
+        try relation.validate(insert.change_set, &errors_after_cast);
+        if (errors_after_cast.isInvalid()) {
+            if (@TypeOf(errors) == @TypeOf(errors_after_cast)) {
+                return .{ .failure = errors_after_cast };
+            } else {
+                try change_set.errorsAfterCast(&errors_after_cast, &errors);
+                return .{ .failure = errors };
+            }
         }
     }
-
-    const insert = insertFromRelation(relation, change_set);
 
     var row = try self.conn.rowOpts(
         @TypeOf(insert).toSql(),
@@ -139,8 +145,46 @@ pub fn create(self: *const @This(), comptime relation: type, change_set: anytype
     return .{ .success = result };
 }
 
+pub fn CastResult(comptime relation: type, comptime field: std.meta.FieldEnum(relation.Attributes)) type {
+    return union(enum) {
+        success: std.meta.fieldInfo(relation.Attributes, field).type,
+        failure: void,
+    };
+}
+
 fn InsertFromRelation(comptime relation: type, comptime ChangeSet: type) type {
     const relation_fields = @typeInfo(relation.Attributes).@"struct".fields;
+    const ChangeSetAfterCast = if (@hasDecl(ChangeSet, "cast_fields")) change_set_after_cast: {
+        const change_set_fields = @typeInfo(ChangeSet).@"struct".fields;
+
+        var change_set_after_cast_fields_buffer: [relation_fields.len]std.builtin.Type.StructField = undefined;
+        var next_change_set_after_cast_field_index = 0;
+        relation_field: inline for (relation_fields) |relation_field| {
+            inline for (ChangeSet.cast_fields) |cast_field| {
+                if (std.mem.eql(u8, relation_field.name, @tagName(cast_field))) {
+                    change_set_after_cast_fields_buffer[next_change_set_after_cast_field_index] = relation_field;
+                    next_change_set_after_cast_field_index += 1;
+                    continue :relation_field;
+                }
+            }
+
+            for (change_set_fields) |change_set_field| {
+                if (std.mem.eql(u8, relation_field.name, change_set_field.name)) {
+                    change_set_after_cast_fields_buffer[next_change_set_after_cast_field_index] = relation_field;
+                    next_change_set_after_cast_field_index += 1;
+                    continue :relation_field;
+                }
+            }
+        }
+
+        break :change_set_after_cast @Type(.{ .@"struct" = .{
+            .layout = .auto,
+            .fields = change_set_after_cast_fields_buffer[0..next_change_set_after_cast_field_index],
+            .decls = &[_]std.builtin.Type.Declaration{},
+            .is_tuple = false,
+        } });
+    } else ChangeSet;
+
     var returning_buf: [relation_fields.len]sql.Output = undefined;
     for (relation_fields, 0..) |field, index| {
         returning_buf[index] = .fromColumn(field.name);
@@ -149,13 +193,55 @@ fn InsertFromRelation(comptime relation: type, comptime ChangeSet: type) type {
 
     return sql.insert.Insert(
         if (@hasField(relation, "from")) relation.from else .fromTable(relativeTypeName(@typeName(relation))),
-        ChangeSet,
+        ChangeSetAfterCast,
         &returning,
     );
 }
 
-fn insertFromRelation(comptime relation: type, change_set: anytype) InsertFromRelation(relation, @TypeOf(change_set)) {
-    return .{ .change_set = change_set };
+fn insertFromRelation(
+    self: *const @This(),
+    comptime relation: type,
+    change_set: anytype,
+    errors: *validation.RecordErrors(@TypeOf(change_set)),
+) !?InsertFromRelation(relation, @TypeOf(change_set)) {
+    const ChangeSet = @TypeOf(change_set);
+    const ChangeSetAfterCast = InsertFromRelation(relation, @TypeOf(change_set)).ChangeSet;
+    if (ChangeSet == ChangeSetAfterCast) {
+        return .{ .change_set = change_set };
+    }
+
+    var change_set_after_cast: ChangeSetAfterCast = undefined;
+    change_set_after_type_cast_field: inline for (@typeInfo(ChangeSetAfterCast).@"struct".fields) |change_set_after_type_cast_field| {
+        if (@hasDecl(ChangeSet, "cast_fields")) {
+            inline for (ChangeSet.cast_fields) |change_set_cast_field| {
+                if (comptime std.mem.eql(u8, @tagName(change_set_cast_field), change_set_after_type_cast_field.name)) {
+                    switch (try change_set.castField(change_set_cast_field, self, errors)) {
+                        .success => |value| {
+                            @field(change_set_after_cast, change_set_after_type_cast_field.name) = value;
+                        },
+                        .failure => {
+                            return null;
+                        },
+                    }
+                    continue :change_set_after_type_cast_field;
+                }
+            }
+        }
+
+        inline for (@typeInfo(ChangeSet).@"struct".fields) |change_set_field| {
+            if (comptime std.mem.eql(u8, change_set_field.name, change_set_after_type_cast_field.name)) {
+                @field(change_set_after_cast, change_set_after_type_cast_field.name) = @field(change_set, change_set_field.name);
+                continue :change_set_after_type_cast_field;
+            }
+        }
+        unreachable;
+    }
+
+    if (errors.isValid()) {
+        return .{ .change_set = change_set_after_cast };
+    } else {
+        return null;
+    }
 }
 
 fn UpdateResult(comptime relation: type) type {

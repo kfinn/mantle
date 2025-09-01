@@ -17,7 +17,9 @@ pub fn RecordErrors(Record: type) type {
         .@"struct" => {
             return Errors(std.meta.FieldEnum(Record));
         },
-        else => unreachable,
+        else => {
+            @compileError("unable to build errors for type " ++ @typeName(Record));
+        },
     }
 }
 

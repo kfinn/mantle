@@ -86,6 +86,12 @@ pub fn install(
             dest_path,
             digested_asset_paths_by_asset_path,
         );
+    } else if (std.mem.eql(u8, ".js", extension)) {
+        try self.installJs(
+            dest_dir,
+            dest_path,
+            digested_asset_paths_by_asset_path,
+        );
     } else {
         try self.installWithoutTransforming(dest_dir, dest_path);
     }
@@ -108,6 +114,52 @@ fn installCss(
     dest_path: []const u8,
     digested_asset_paths_by_asset_path: *const std.StringHashMap([]const u8),
 ) !void {
+    try installTransformed(
+        self,
+        dest_dir,
+        dest_path,
+        digested_asset_paths_by_asset_path,
+        .{
+            .asset_start_token = "url(",
+            .asset_end_token = ")",
+        },
+    );
+}
+
+fn installJs(
+    self: *const @This(),
+    dest_dir: std.fs.Dir,
+    dest_path: []const u8,
+    digested_asset_paths_by_asset_path: *const std.StringHashMap([]const u8),
+) !void {
+    try installTransformed(
+        self,
+        dest_dir,
+        dest_path,
+        digested_asset_paths_by_asset_path,
+        .{
+            .asset_start_token = "MANTLE_ASSET_URL(\"",
+            .transformed_asset_start_token = "\"",
+            .asset_end_token = "\")",
+            .transformed_asset_end_token = "\"",
+        },
+    );
+}
+
+const InstallTransformedOptions = struct {
+    asset_start_token: []const u8,
+    transformed_asset_start_token: ?[]const u8 = null,
+    asset_end_token: []const u8,
+    transformed_asset_end_token: ?[]const u8 = null,
+};
+
+fn installTransformed(
+    self: *const @This(),
+    dest_dir: std.fs.Dir,
+    dest_path: []const u8,
+    digested_asset_paths_by_asset_path: *const std.StringHashMap([]const u8),
+    options: InstallTransformedOptions,
+) !void {
     var max_asset_path_len: usize = 0;
     var asset_paths_iterator = digested_asset_paths_by_asset_path.keyIterator();
     while (asset_paths_iterator.next()) |asset_path| {
@@ -116,8 +168,7 @@ fn installCss(
 
     const State = enum {
         plain,
-        @"url(",
-        eof,
+        asset,
     };
 
     var src_file = try self.dir.openFile(self.path, .{});
@@ -140,39 +191,38 @@ fn installCss(
 
     state: switch (State.plain) {
         .plain => {
-            _ = reader.streamDelimiter(writer, 'u') catch |err| switch (err) {
-                error.EndOfStream => continue :state .eof,
+            _ = reader.streamDelimiter(writer, options.asset_start_token[0]) catch |err| switch (err) {
+                error.EndOfStream => break :state,
                 else => return err,
             };
-            const url_start_token = "url(";
-            const peek = reader.peek(url_start_token.len) catch |err| switch (err) {
+            const peek = reader.peek(options.asset_start_token.len) catch |err| switch (err) {
                 error.EndOfStream => {
                     _ = try reader.streamRemaining(writer);
-                    continue :state .eof;
+                    break :state;
                 },
                 else => return err,
             };
-            if (std.mem.eql(u8, peek, url_start_token)) {
-                reader.toss(url_start_token.len);
-                try writer.writeAll(url_start_token);
-                continue :state .@"url(";
+            if (std.mem.eql(u8, peek, options.asset_start_token)) {
+                reader.toss(options.asset_start_token.len);
+                try writer.writeAll(options.transformed_asset_start_token orelse options.asset_start_token);
+                continue :state .asset;
             } else {
                 reader.toss(1);
-                try writer.writeByte('u');
+                try writer.writeByte(options.asset_start_token[0]);
                 continue :state .plain;
             }
         },
-        .@"url(" => {
-            const url = try reader.takeDelimiterExclusive(')');
+        .asset => {
+            const url = try reader.takeDelimiterExclusive(options.asset_end_token[0]);
+            std.debug.assert(std.mem.eql(u8, try reader.peek(options.asset_end_token.len), options.asset_end_token));
+            reader.toss(options.asset_end_token.len);
             if (digested_asset_paths_by_asset_path.get(url)) |digested_asset_path| {
                 try writer.writeAll(digested_asset_path);
             } else {
                 try writer.writeAll(url);
             }
+            try writer.writeAll(options.transformed_asset_end_token orelse options.asset_end_token);
             continue :state .plain;
-        },
-        .eof => {
-            try writer.print("\n\n/*# sourceMappingURL={s} */\n", .{self.path});
         },
     }
 

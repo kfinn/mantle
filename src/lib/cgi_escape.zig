@@ -91,14 +91,52 @@ pub fn writeEscapedFormEncodedComponent(writer: *std.Io.Writer, unsafe_text: []c
     }
 }
 
-pub fn writeEscapedHtmlAttribute(writer: *std.Io.Writer, unsafe_text: []const u8) std.Io.Writer.Error!void {
-    for (unsafe_text) |character| {
-        switch (character) {
-            '"' => try writer.writeAll("\\\""),
-            '\\' => try writer.writeAll("\\\\"),
-            else => try writer.writeByte(character),
+pub const EscapedHtmlAttributeWriter = struct {
+    out: *std.Io.Writer,
+    interface: std.Io.Writer,
+
+    pub fn init(out: *std.Io.Writer) @This() {
+        return .{
+            .out = out,
+            .interface = .{
+                .vtable = &.{
+                    .drain = @This().drain,
+                },
+                .buffer = &.{},
+            },
+        };
+    }
+
+    fn drain(w: *std.Io.Writer, data: []const []const u8, splat: usize) !usize {
+        const self: *const @This() = @alignCast(@fieldParentPtr("interface", w));
+        var drained: usize = 0;
+        for (data[0 .. data.len - 1]) |datum| {
+            for (datum) |c| {
+                try self.writeEscapedByte(c);
+                drained += 1;
+            }
+        }
+        for (0..splat) |_| {
+            for (data[data.len - 1]) |c| {
+                try self.writeEscapedByte(c);
+                drained += 1;
+            }
+        }
+        return drained;
+    }
+
+    fn writeEscapedByte(self: *const @This(), unescaped_byte: u8) !void {
+        switch (unescaped_byte) {
+            '"' => try self.out.writeAll("&quot;"),
+            else => try self.out.writeByte(unescaped_byte),
         }
     }
+};
+
+pub fn writeEscapedHtmlAttribute(writer: *std.Io.Writer, unsafe_text: []const u8) std.Io.Writer.Error!void {
+    var escaped_writer: EscapedHtmlAttributeWriter = .init(writer);
+    try escaped_writer.interface.writeAll(unsafe_text);
+    try escaped_writer.interface.flush();
 }
 
 test writeEscapedHtml {

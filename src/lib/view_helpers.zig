@@ -82,9 +82,13 @@ pub fn writeErrors(writer: *std.Io.Writer, errors: []validation.Error, options: 
 pub const FieldOptions = struct {
     label: LabelOptions = .{},
     input: InputOptions = .{},
+    errors: ErrorsOptions = .{},
 };
 
-pub const LabelOptions = struct { class: ?[]const u8 = null };
+pub const LabelOptions = struct {
+    name: ?[]const u8 = null,
+    class: ?[]const u8 = null,
+};
 
 pub fn writeRecordField(
     writer: *std.Io.Writer,
@@ -109,11 +113,9 @@ pub fn writeField(
     comptime name: []const u8,
     options: FieldOptions,
 ) !void {
-    const title_case_field_name = comptime inflector.comptimeHumanize(name);
-
     try writeHtmlTag(writer, "label", .{ .@"for" = name, .class = options.label.class }, .{});
     try writer.writeAll("<span>");
-    try cgi_escape.writeEscapedHtml(writer, title_case_field_name);
+    try cgi_escape.writeEscapedHtml(writer, options.label.name orelse name);
     try writer.writeAll("</span>");
     try writeInput(writer, name, value, .{
         .autofocus = options.input.autofocus,
@@ -121,7 +123,7 @@ pub fn writeField(
         .class = options.input.class,
     });
     try writer.writeAll("<div>");
-    try writeErrors(writer, errors, .{});
+    try writeErrors(writer, errors, options.errors);
     try writer.writeAll("</div>");
     try writer.writeAll("</label>");
 }

@@ -79,7 +79,7 @@ pub inline fn comptimeSingularize(comptime plural: []const u8) *const [singulari
     }
 }
 
-const WordIterator = struct {
+const CamelCaseWordIterator = struct {
     const State = enum { acronym, word };
 
     text: []const u8,
@@ -127,39 +127,33 @@ const WordIterator = struct {
     }
 };
 
-fn decamelizeCount(text: []const u8) usize {
-    var word_iterator = WordIterator.init(text);
-    var words_count = 0;
-    while (word_iterator.next()) |_| {
-        words_count += 1;
-    }
-    return text.len + words_count - 1;
-}
-
-fn bufHumanize(buf: []u8, text: []const u8) std.fmt.BufPrintError![]u8 {
-    var word_iterator = WordIterator.init(text);
-    var buf_stream = std.io.fixedBufferStream(buf);
-    var buf_writer = buf_stream.writer();
-    var requires_underscore = false;
-    var bytes_written = 0;
+fn writeDelimited(writer: *std.Io.Writer, text: []const u8, delimiter: u8) !void {
+    var word_iterator = CamelCaseWordIterator.init(text);
+    var requires_delimiter = false;
     while (word_iterator.next()) |word| {
-        if (requires_underscore) {
-            try buf_writer.writeByte(' ');
-            bytes_written += 1;
+        if (requires_delimiter) {
+            try writer.writeByte(delimiter);
         }
         for (word) |c| {
-            try buf_writer.writeByte(std.ascii.toLower(c));
-            bytes_written += 1;
+            try writer.writeByte(std.ascii.toLower(c));
         }
-        requires_underscore = true;
+        requires_delimiter = true;
     }
-    return buf[0..bytes_written];
+    try writer.flush();
 }
 
-pub fn comptimeHumanize(comptime text: []const u8) *const [decamelizeCount(text):0]u8 {
+fn delimitedCount(text: []const u8) usize {
+    var discarding_writer = std.Io.Writer.Discarding.init(&.{});
+    writeDelimited(&discarding_writer.writer, text, ' ') catch unreachable;
+    return discarding_writer.count;
+}
+
+pub fn comptimeHumanize(comptime text: []const u8) *const [delimitedCount(text):0]u8 {
     comptime {
-        var buf: [decamelizeCount(text):0]u8 = undefined;
-        _ = bufHumanize(&buf, text) catch unreachable;
+        @setEvalBranchQuota(10000);
+        var buf: [delimitedCount(text):0]u8 = undefined;
+        var buf_writer = std.Io.Writer.fixed(&buf);
+        writeDelimited(&buf_writer, text, ' ') catch unreachable;
         buf[buf.len] = 0;
         const final = buf;
         return &final;

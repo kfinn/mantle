@@ -122,6 +122,31 @@ pub fn Form(comptime Model: type) type {
         pub fn writeField(self: *const @This(), writer: *std.Io.Writer, comptime name: std.meta.FieldEnum(Model), options: view_helpers.FieldOptions) !void {
             try view_helpers.writeRecordField(writer, self.model, &self.errors, name, options);
         }
+
+        pub fn fields(self: *const @This(), comptime name: std.meta.FieldEnum(Model)) Fields(std.meta.fieldInfo(Model, name).type, @tagName(name)) {
+            return .{ .model = &@field(self.model, @tagName(name)) };
+        }
+    };
+}
+
+pub fn Fields(comptime Model: type, comptime path_prefix: []const u8) type {
+    return struct {
+        model: *const Model,
+
+        pub fn writeField(self: *const @This(), writer: *std.Io.Writer, comptime name: std.meta.FieldEnum(Model), options: view_helpers.FieldOptions) !void {
+            const field_name = @tagName(name);
+            try view_helpers.writeField(
+                writer,
+                @field(self.model, field_name),
+                &[_]validation.Error{},
+                path_prefix ++ "[" ++ field_name ++ "]",
+                options,
+            );
+        }
+
+        pub fn fields(self: *const @This(), comptime name: std.meta.FieldEnum(Model)) Fields(std.meta.fieldInfo(Model, name).type, path_prefix ++ "[" ++ @tagName(name) ++ "]") {
+            return .{ .model = &@field(self.model, @tagName(name)) };
+        }
     };
 }
 
