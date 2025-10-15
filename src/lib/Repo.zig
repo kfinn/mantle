@@ -83,6 +83,8 @@ pub fn all(self: *const @This(), comptime relation: type) ![]relationResultType(
 }
 
 fn SelectFromRelation(comptime relation: type, comptime WhereParam: ?type, has_limit: bool) type {
+    @setEvalBranchQuota(100000);
+
     const outputs = comptime outputs: {
         const fields = @typeInfo(RelationAttributesBeforeDbCast(relation)).@"struct".fields;
         var outputs_buf: [fields.len]sql.Output = undefined;
@@ -105,6 +107,8 @@ fn selectFromRelation(comptime relation: type, where: anytype, comptime opt_limi
     @TypeOf(where),
     if (opt_limit) |_| true else false,
 ) {
+    @setEvalBranchQuota(100000);
+
     return .{
         .where = where,
         .limit = if (opt_limit) |limit| limit else void{},
@@ -120,11 +124,11 @@ fn CreateResult(comptime relation: type, comptime ChangeSet: type) type {
 
 pub fn create(self: *const @This(), comptime relation: type, change_set: anytype) !CreateResult(relation, @TypeOf(change_set)) {
     var errors: validation.RecordErrors(@TypeOf(change_set)) = .init(self.allocator);
-    const insert = try self.insertFromRelation(relation, change_set, &errors) orelse return .{ .failure = errors };
+    const change_set_after_type_cast = try self.typeCastedChangeSet(relation, change_set, &errors) orelse return .{ .failure = errors };
 
     if (std.meta.hasFn(relation, "validate")) {
-        var errors_after_cast: validation.RecordErrors(@TypeOf(insert.change_set)) = .init(self.allocator);
-        try relation.validate(insert.change_set, &errors_after_cast);
+        var errors_after_cast: validation.RecordErrors(@TypeOf(change_set_after_type_cast)) = .init(self.allocator);
+        try relation.validate(change_set_after_type_cast, &errors_after_cast);
         if (errors_after_cast.isInvalid()) {
             if (@TypeOf(errors) == @TypeOf(errors_after_cast)) {
                 return .{ .failure = errors_after_cast };
@@ -135,24 +139,40 @@ pub fn create(self: *const @This(), comptime relation: type, change_set: anytype
         }
     }
 
-    var row = try self.conn.rowOpts(
+    const insert = try self.typeCastedChangeSetToInsert(relation, change_set_after_type_cast);
+    if (self.conn.rowOpts(
         @TypeOf(insert).toSql(),
         insert.params(),
         .{ .allocator = self.allocator },
-    ) orelse return error.UnknownInsertError;
-    const result = try self.rowToRelationResult(relation, &row);
-    try row.deinit();
-    return .{ .success = result };
+    )) |opt_row| {
+        if (opt_row == null) return error.UnknownInsertError;
+        var row = opt_row.?;
+        const result = try self.rowToRelationResult(relation, &row);
+        row.deinit() catch {};
+        return .{ .success = result };
+    } else |err| {
+        if (err == error.PG) {
+            if (self.conn.err) |pg_err| {
+                try errors.addBaseError(.init(err, pg_err.message));
+                return .{ .failure = errors };
+            }
+        }
+
+        try errors.addBaseError(.init(err, "unknown error"));
+        return .{ .failure = errors };
+    }
 }
 
 pub fn CastResult(comptime T: type) type {
     return union(enum) {
         success: T,
-        failure: void,
+        failure,
     };
 }
 
 fn ChangeSetAfterRelationAttributesCast(comptime relation: type, comptime ChangeSet: type) type {
+    @setEvalBranchQuota(100000);
+
     if (!@hasDecl(ChangeSet, "casts")) return ChangeSet;
 
     const relation_fields = @typeInfo(relation.Attributes).@"struct".fields;
@@ -191,6 +211,8 @@ fn ChangeSetAfterRelationAttributesCast(comptime relation: type, comptime Change
 }
 
 fn InsertFromRelation(comptime relation: type, comptime ChangeSet: type) type {
+    @setEvalBranchQuota(100000);
+
     const ConcreteChangeSetAfterRelationAttributesCast = ChangeSetAfterRelationAttributesCast(relation, ChangeSet);
     const ConcreteChangeSetAfterDbCast = ChangeSetAfterDbCast(relation, ConcreteChangeSetAfterRelationAttributesCast);
 
@@ -208,40 +230,49 @@ fn InsertFromRelation(comptime relation: type, comptime ChangeSet: type) type {
     );
 }
 
-fn insertFromRelation(
+fn typeCastedChangeSet(
     self: *const @This(),
     comptime relation: type,
-    change_set: anytype,
-    errors: *validation.RecordErrors(@TypeOf(change_set)),
-) !?InsertFromRelation(relation, @TypeOf(change_set)) {
-    const ChangeSet = @TypeOf(change_set);
-    const ConcreteChangeSetAfterRelationAttributesCast = ChangeSetAfterRelationAttributesCast(relation, ChangeSet);
-    const ConcreteChangeSetAfterDbCast = ChangeSetAfterDbCast(relation, ConcreteChangeSetAfterRelationAttributesCast);
+    change_set_before_type_cast: anytype,
+    errors: *validation.RecordErrors(@TypeOf(change_set_before_type_cast)),
+) !?ChangeSetAfterRelationAttributesCast(relation, @TypeOf(change_set_before_type_cast)) {
+    @setEvalBranchQuota(100000);
 
-    if (ChangeSet == ConcreteChangeSetAfterDbCast) {
-        return .{ .change_set = change_set };
+    const ChangeSet = @TypeOf(change_set_before_type_cast);
+    const ConcreteChangeSetAfterRelationAttributesCast = ChangeSetAfterRelationAttributesCast(relation, ChangeSet);
+
+    if (ChangeSet == ConcreteChangeSetAfterRelationAttributesCast) {
+        return change_set_before_type_cast;
     }
 
     var change_set_after_relation_attributes_cast: ConcreteChangeSetAfterRelationAttributesCast = undefined;
     if (ChangeSet == ConcreteChangeSetAfterRelationAttributesCast) {
-        change_set_after_relation_attributes_cast = change_set;
+        change_set_after_relation_attributes_cast = change_set_before_type_cast;
     } else {
         change_set_after_type_cast_field: inline for (@typeInfo(ConcreteChangeSetAfterRelationAttributesCast).@"struct".fields) |change_set_after_type_cast_field| {
             if (@hasDecl(ChangeSet, "casts") and std.meta.hasFn(ChangeSet.casts, change_set_after_type_cast_field.name)) {
-                switch (try @field(ChangeSet.casts, change_set_after_type_cast_field.name)(change_set, self, errors)) {
+                switch (try @field(ChangeSet.casts, change_set_after_type_cast_field.name)(change_set_before_type_cast, self, errors)) {
                     .success => |value| {
                         @field(change_set_after_relation_attributes_cast, change_set_after_type_cast_field.name) = value;
                     },
-                    .failure => {
-                        return null;
-                    },
+                    else => {},
                 }
                 continue :change_set_after_type_cast_field;
             }
 
             inline for (@typeInfo(ChangeSet).@"struct".fields) |change_set_field| {
                 if (comptime std.mem.eql(u8, change_set_field.name, change_set_after_type_cast_field.name)) {
-                    @field(change_set_after_relation_attributes_cast, change_set_after_type_cast_field.name) = @field(change_set, change_set_field.name);
+                    switch (try builtinCast(change_set_field.type, change_set_after_type_cast_field, @field(change_set_before_type_cast, change_set_field.name))) {
+                        .success => |value_after_type_cast| {
+                            @field(change_set_after_relation_attributes_cast, change_set_after_type_cast_field.name) = value_after_type_cast;
+                        },
+                        .failure => |err| {
+                            try errors.addFieldError(
+                                std.meta.stringToEnum(@TypeOf(errors.*).Field, change_set_field.name).?,
+                                err,
+                            );
+                        },
+                    }
                     continue :change_set_after_type_cast_field;
                 }
             }
@@ -253,10 +284,101 @@ fn insertFromRelation(
         }
     }
 
-    if (ConcreteChangeSetAfterRelationAttributesCast == ConcreteChangeSetAfterDbCast) {
-        return .{ .change_set = change_set_after_relation_attributes_cast };
+    return change_set_after_relation_attributes_cast;
+}
+
+fn typeCastedChangeSetToInsert(
+    self: *const @This(),
+    comptime relation: type,
+    change_set: anytype,
+) !InsertFromRelation(relation, @TypeOf(change_set)) {
+    @setEvalBranchQuota(100000);
+
+    const ChangeSet = @TypeOf(change_set);
+    std.debug.assert(ChangeSet == ChangeSetAfterRelationAttributesCast(relation, ChangeSet));
+    const ConcreteChangeSetAfterDbCast = ChangeSetAfterDbCast(relation, ChangeSet);
+
+    if (ChangeSet == ConcreteChangeSetAfterDbCast) {
+        return .{ .change_set = change_set };
     }
-    return .{ .change_set = try changeSetAfterDbCast(self, relation, change_set_after_relation_attributes_cast) };
+    return .{ .change_set = try changeSetAfterDbCast(self, relation, change_set) };
+}
+
+fn BuiltinCastResult(comptime ValueAfterTypeCast: type) type {
+    return union(enum) {
+        success: ValueAfterTypeCast,
+        failure: validation.Error,
+    };
+}
+
+fn builtinCast(comptime ValueBeforeTypeCast: type, comptime field_after_type_cast: std.builtin.Type.StructField, value_before_type_cast: ValueBeforeTypeCast) !BuiltinCastResult(field_after_type_cast.type) {
+    const ValueAfterTypeCast = field_after_type_cast.type;
+    if (ValueBeforeTypeCast == ValueAfterTypeCast) {
+        return .{ .success = value_before_type_cast };
+    }
+    if (ValueBeforeTypeCast == []const u8) {
+        switch (@typeInfo(ValueAfterTypeCast)) {
+            .optional => |optional| {
+                if (optional.child == ValueBeforeTypeCast) {
+                    return .{ .success = value_before_type_cast };
+                }
+                switch (@typeInfo(optional.child)) {
+                    .int => {
+                        if (value_before_type_cast.len == 0) {
+                            return .{ .success = field_after_type_cast.defaultValue() orelse null };
+                        }
+                        if (std.fmt.parseInt(optional.child, value_before_type_cast, 10)) |value_after_type_cast| {
+                            return .{ .success = value_after_type_cast };
+                        } else |err| {
+                            return .{ .failure = .init(err, "invalid number") };
+                        }
+                    },
+                    .float => {
+                        if (value_before_type_cast.len == 0) {
+                            return .{ .success = field_after_type_cast.defaultValue() orelse null };
+                        }
+                        if (std.fmt.parseFloat(optional.child, value_before_type_cast)) |value_after_type_cast| {
+                            return .{ .success = value_after_type_cast };
+                        } else |err| {
+                            return .{ .failure = .init(err, "invalid number") };
+                        }
+                    },
+                    else => {
+                        @compileError("Cannot automatically cast type " ++ @typeName(ValueBeforeTypeCast) ++ " to " ++ @typeName(ValueAfterTypeCast));
+                    },
+                }
+            },
+            .int => {
+                if (value_before_type_cast.len == 0) {
+                    if (field_after_type_cast.defaultValue()) |default_value| {
+                        return .{ .success = default_value };
+                    }
+                    return .{ .failure = .init(error.Required, "required") };
+                }
+                if (std.fmt.parseInt(ValueAfterTypeCast, value_before_type_cast, 10)) |value_after_type_cast| {
+                    return .{ .success = value_after_type_cast };
+                } else |err| {
+                    return .{ .failure = .init(err, "invalid number") };
+                }
+            },
+            .float => {
+                if (value_before_type_cast.len == 0) {
+                    if (field_after_type_cast.defaultValue()) |default_value| {
+                        return .{ .success = default_value };
+                    }
+                    return .{ .failure = .init(error.Required, "required") };
+                }
+                if (std.fmt.parseFloat(ValueAfterTypeCast, value_before_type_cast)) |value_after_type_cast| {
+                    return .{ .success = value_after_type_cast };
+                } else |err| {
+                    return .{ .failure = .init(err, "invalid number") };
+                }
+            },
+            else => {
+                @compileError("Cannot automatically cast type " ++ @typeName(ValueBeforeTypeCast) ++ " to " ++ @typeName(ValueAfterTypeCast));
+            },
+        }
+    }
 }
 
 fn UpdateResult(comptime relation: type) type {
@@ -303,6 +425,8 @@ pub fn update(
 }
 
 fn UpdateFromRelation(comptime relation: type, comptime ChangeSet: type) type {
+    @setEvalBranchQuota(100000);
+
     const relation_fields = @typeInfo(relation.Attributes).@"struct".fields;
     var returning_buf: [relation_fields.len]sql.Output = undefined;
     for (relation_fields, 0..) |field, index| {
@@ -319,6 +443,8 @@ fn UpdateFromRelation(comptime relation: type, comptime ChangeSet: type) type {
 }
 
 fn updateFromRelation(self: *const @This(), comptime relation: type, id: primaryKeyType(relation), change_set: anytype) UpdateFromRelation(relation, @TypeOf(change_set)) {
+    @setEvalBranchQuota(100000);
+
     return .{
         .change_set = try changeSetAfterDbCast(self, relation, change_set),
         .where = .{ .params = .{id} },
@@ -326,21 +452,50 @@ fn updateFromRelation(self: *const @This(), comptime relation: type, id: primary
 }
 
 fn ChangeSetAfterDbCast(relation: type, ChangeSet: type) type {
-    if (!@hasDecl(relation, "to_db_casts")) return ChangeSet;
+    const to_db_casts = if (@hasDecl(relation, "to_db_casts")) relation.to_db_casts else struct {};
     const change_set_fields = std.meta.fields(ChangeSet);
     var fields: [change_set_fields.len]std.builtin.Type.StructField = undefined;
-    for (change_set_fields, 0..) |change_set_field, index| {
-        if (std.meta.hasFn(relation.to_db_casts, change_set_field.name)) {
+    field: for (change_set_fields, 0..) |change_set_field, index| {
+        if (std.meta.hasFn(to_db_casts, change_set_field.name)) {
             fields[index] = .{
                 .name = change_set_field.name,
-                .type = @typeInfo(@typeInfo(@TypeOf(@field(relation.to_db_casts, change_set_field.name))).@"fn".return_type.?).error_union.payload,
+                .type = @typeInfo(@typeInfo(@TypeOf(@field(to_db_casts, change_set_field.name))).@"fn".return_type.?).error_union.payload,
                 .default_value_ptr = null,
                 .is_comptime = false,
                 .alignment = change_set_field.alignment,
             };
-        } else {
-            fields[index] = change_set_field;
+            continue :field;
         }
+
+        switch (@typeInfo(change_set_field.type)) {
+            .@"struct" => {
+                if (std.meta.hasMethod(change_set_field.type, "castToDb")) {
+                    fields[index] = .{
+                        .name = change_set_field.name,
+                        .type = @typeInfo(@typeInfo(@TypeOf(change_set_field.type.castToDb)).@"fn".return_type.?).error_union.payload,
+                        .default_value_ptr = null,
+                        .is_comptime = false,
+                        .alignment = change_set_field.alignment,
+                    };
+                    continue :field;
+                }
+            },
+            .optional => |optional| {
+                if (std.meta.hasMethod(optional.child, "castToDb")) {
+                    fields[index] = .{
+                        .name = change_set_field.name,
+                        .type = ?@typeInfo(@typeInfo(@TypeOf(optional.child.castToDb)).@"fn".return_type.?).error_union.payload,
+                        .default_value_ptr = null,
+                        .is_comptime = false,
+                        .alignment = change_set_field.alignment,
+                    };
+                    continue :field;
+                }
+            },
+            else => {},
+        }
+
+        fields[index] = change_set_field;
     }
 
     return @Type(.{ .@"struct" = .{
@@ -353,23 +508,44 @@ fn ChangeSetAfterDbCast(relation: type, ChangeSet: type) type {
 
 fn changeSetAfterDbCast(self: *const @This(), comptime relation: type, change_set: anytype) !ChangeSetAfterDbCast(relation, @TypeOf(change_set)) {
     var result: ChangeSetAfterDbCast(relation, @TypeOf(change_set)) = undefined;
-    const casts = if (@hasDecl(relation, "to_db_casts")) relation.to_db_casts else struct {};
-    inline for (std.meta.fields(@TypeOf(result))) |field| {
-        if (std.meta.hasFn(casts, field.name)) {
-            @field(result, field.name) = try @field(casts, field.name)(@field(change_set, field.name), self);
-        } else {
-            @field(result, field.name) = @field(change_set, field.name);
+    const to_db_casts = if (@hasDecl(relation, "to_db_casts")) relation.to_db_casts else struct {};
+    field: inline for (std.meta.fields(@TypeOf(change_set))) |field| {
+        if (std.meta.hasFn(to_db_casts, field.name)) {
+            @field(result, field.name) = try @field(to_db_casts, field.name)(@field(change_set, field.name), self);
+            continue :field;
         }
+
+        switch (@typeInfo(field.type)) {
+            .@"struct" => {
+                if (std.meta.hasMethod(field.type, "castToDb")) {
+                    @field(result, field.name) = try @field(change_set, field.name).castToDb(self);
+                    continue :field;
+                }
+            },
+            .optional => |optional| {
+                if (std.meta.hasMethod(optional.child, "castToDb")) {
+                    if (@field(change_set, field.name)) |present_value| {
+                        @field(result, field.name) = try present_value.castToDb(self);
+                    } else {
+                        @field(result, field.name) = null;
+                    }
+                    continue :field;
+                }
+            },
+            else => {},
+        }
+
+        @field(result, field.name) = @field(change_set, field.name);
     }
     return result;
 }
 
 fn RelationAttributesBeforeDbCast(relation: type) type {
-    if (!@hasDecl(relation, "from_db_casts")) return relation.Attributes;
+    const from_db_casts = if (@hasDecl(relation, "from_db_casts")) relation.from_db_casts else struct {};
     const relation_fields = std.meta.fields(relation.Attributes);
     var fields: [relation_fields.len]std.builtin.Type.StructField = undefined;
-    for (relation_fields, 0..) |relation_field, index| {
-        if (std.meta.hasFn(relation.from_db_casts, relation_field.name)) {
+    field: for (relation_fields, 0..) |relation_field, index| {
+        if (std.meta.hasFn(from_db_casts, relation_field.name)) {
             fields[index] = .{
                 .name = relation_field.name,
                 .type = @typeInfo(@TypeOf(@field(relation.from_db_casts, relation_field.name))).@"fn".params[0].type.?,
@@ -377,9 +553,38 @@ fn RelationAttributesBeforeDbCast(relation: type) type {
                 .is_comptime = false,
                 .alignment = relation_field.alignment,
             };
-        } else {
-            fields[index] = relation_field;
+            continue :field;
         }
+
+        switch (@typeInfo(relation_field.type)) {
+            .@"struct" => {
+                if (std.meta.hasFn(relation_field.type, "castFromDb")) {
+                    fields[index] = .{
+                        .name = relation_field.name,
+                        .type = @typeInfo(@TypeOf(relation_field.type.castFromDb)).@"fn".params[0].type.?,
+                        .default_value_ptr = null,
+                        .is_comptime = false,
+                        .alignment = relation_field.alignment,
+                    };
+                    continue :field;
+                }
+            },
+            .optional => |optional| {
+                if (std.meta.hasFn(optional.child, "castFromDb")) {
+                    fields[index] = .{
+                        .name = relation_field.name,
+                        .type = ?@typeInfo(@TypeOf(optional.child.castFromDb)).@"fn".params[0].type.?,
+                        .default_value_ptr = null,
+                        .is_comptime = false,
+                        .alignment = relation_field.alignment,
+                    };
+                    continue :field;
+                }
+            },
+            else => {},
+        }
+
+        fields[index] = relation_field;
     }
 
     return @Type(.{ .@"struct" = .{
@@ -394,13 +599,34 @@ fn rowToRelationResult(self: *const @This(), comptime relation: type, row: anyty
     var result: relationResultType(relation) = undefined;
     const AttributesBeforeDbCast = RelationAttributesBeforeDbCast(relation);
     const attributes_before_db_cast = try row.to(AttributesBeforeDbCast, .{ .dupe = true, .allocator = self.allocator });
-    const casts = if (@hasDecl(relation, "from_db_casts")) relation.from_db_casts else struct {};
-    inline for (std.meta.fields(@TypeOf(result.attributes))) |field| {
-        if (std.meta.hasFn(casts, field.name)) {
-            @field(result.attributes, field.name) = try @field(casts, field.name)(@field(attributes_before_db_cast, field.name), self);
-        } else {
-            @field(result.attributes, field.name) = @field(attributes_before_db_cast, field.name);
+    const from_db_casts = if (@hasDecl(relation, "from_db_casts")) relation.from_db_casts else struct {};
+    field: inline for (std.meta.fields(@TypeOf(result.attributes))) |field| {
+        if (std.meta.hasFn(from_db_casts, field.name)) {
+            @field(result.attributes, field.name) = try @field(from_db_casts, field.name)(@field(attributes_before_db_cast, field.name), self);
+            continue :field;
         }
+
+        switch (@typeInfo(field.type)) {
+            .@"struct" => {
+                if (std.meta.hasFn(field.type, "castFromDb")) {
+                    @field(result.attributes, field.name) = try field.type.castFromDb(@field(attributes_before_db_cast, field.name), self);
+                    continue :field;
+                }
+            },
+            .optional => |optional| {
+                if (std.meta.hasFn(optional.child, "castFromDb")) {
+                    if (@field(attributes_before_db_cast, field.name)) |present_attribute| {
+                        @field(result.attributes, field.name) = try optional.child.castFromDb(present_attribute, self);
+                    } else {
+                        @field(result.attributes, field.name) = null;
+                    }
+                    continue :field;
+                }
+            },
+            else => {},
+        }
+
+        @field(result.attributes, field.name) = @field(attributes_before_db_cast, field.name);
     }
     return result;
 }

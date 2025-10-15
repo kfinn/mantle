@@ -46,6 +46,8 @@ pub fn Select(
     comptime WhereParam: type,
     comptime has_limit_param: bool,
 ) type {
+    @setEvalBranchQuota(10000);
+
     return struct {
         pub const outputs = outputs_param;
         pub const from = from_param;
@@ -108,12 +110,16 @@ pub fn Select(
         }
 
         fn comptimeToSqlCount() usize {
+            @setEvalBranchQuota(10000);
+
             var discarding_writer: std.Io.Writer.Discarding = .init(&.{});
             writeToSql(&discarding_writer.writer) catch unreachable;
             return discarding_writer.fullCount();
         }
 
         pub fn toSql() *const [comptimeToSqlCount():0]u8 {
+            @setEvalBranchQuota(10000);
+
             const sql: [comptimeToSqlCount():0]u8 = comptime sql: {
                 var buf: [comptimeToSqlCount():0]u8 = undefined;
                 var writer = std.Io.Writer.fixed(&buf);

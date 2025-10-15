@@ -79,6 +79,7 @@ pub fn writeErrors(writer: *std.Io.Writer, errors: []validation.Error, options: 
 
     try writer.writeAll("</span>");
 }
+
 pub const FieldOptions = struct {
     label: LabelOptions = .{},
     input: InputOptions = .{},
@@ -115,13 +116,9 @@ pub fn writeField(
 ) !void {
     try writeHtmlTag(writer, "label", .{ .@"for" = name, .class = options.label.class }, .{});
     try writer.writeAll("<span>");
-    try cgi_escape.writeEscapedHtml(writer, options.label.name orelse name);
+    try cgi_escape.writeEscapedHtml(writer, options.label.name orelse comptime inflector.comptimeHumanize(name));
     try writer.writeAll("</span>");
-    try writeInput(writer, name, value, .{
-        .autofocus = options.input.autofocus,
-        .type = options.input.type,
-        .class = options.input.class,
-    });
+    try writeInput(writer, name, value, options.input);
     try writer.writeAll("<div>");
     try writeErrors(writer, errors, options.errors);
     try writer.writeAll("</div>");
@@ -132,6 +129,7 @@ pub const InputOptions = struct {
     autofocus: ?bool = null,
     type: ?[]const u8 = null,
     class: ?[]const u8 = null,
+    autocomplete: ?[]const u8 = null,
 };
 
 pub fn writeInput(writer: *std.Io.Writer, name: []const u8, value: []const u8, options: InputOptions) std.Io.Writer.Error!void {
@@ -145,6 +143,7 @@ pub fn writeInput(writer: *std.Io.Writer, name: []const u8, value: []const u8, o
             .autofocus = options.autofocus,
             .type = options.type,
             .class = options.class,
+            .autocomplete = options.autocomplete,
         },
         .{},
     );
