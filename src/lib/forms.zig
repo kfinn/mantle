@@ -39,7 +39,10 @@ fn comptimeFormDataPath(comptime path: []const []const u8) [formDataPathCount(pa
 }
 
 pub fn parse(T: type, form_data: anytype) !T {
-    return try parseInternal(T, form_data, &[_][]const u8{});
+    return parseInternal(T, form_data, &[_][]const u8{}) catch |err| switch (err) {
+        error.MissingField => error.InvalidFormData,
+        else => return err,
+    };
 }
 
 inline fn parseInternal(T: type, form_data: anytype, comptime prefix: []const []const u8) !T {
@@ -47,11 +50,14 @@ inline fn parseInternal(T: type, form_data: anytype, comptime prefix: []const []
         .@"struct" => |@"struct"| {
             var result: T = undefined;
             inline for (@"struct".fields) |field| {
-                @field(result, field.name) = try parseInternal(
+                @field(result, field.name) = parseInternal(
                     field.type,
                     form_data,
                     prefix ++ .{field.name},
-                );
+                ) catch |err| switch (err) {
+                    error.MissingField => if (field.defaultValue()) |default_value| default_value else return err,
+                    else => return err,
+                };
             }
             return result;
         },

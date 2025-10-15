@@ -131,11 +131,16 @@ fn writeDelimited(writer: *std.Io.Writer, text: []const u8, delimiter: u8) !void
     var word_iterator = CamelCaseWordIterator.init(text);
     var requires_delimiter = false;
     while (word_iterator.next()) |word| {
-        if (requires_delimiter) {
-            try writer.writeByte(delimiter);
-        }
         for (word) |c| {
-            try writer.writeByte(std.ascii.toLower(c));
+            if (std.ascii.isAlphanumeric(c)) {
+                if (requires_delimiter) {
+                    try writer.writeByte(delimiter);
+                    requires_delimiter = false;
+                }
+                try writer.writeByte(std.ascii.toLower(c));
+            } else {
+                requires_delimiter = true;
+            }
         }
         requires_delimiter = true;
     }
@@ -167,4 +172,5 @@ test comptimeHumanize {
     try std.testing.expectEqualStrings("uri preference", comptime comptimeHumanize("URIPreference"));
     try std.testing.expectEqualStrings("user uri preference", comptime comptimeHumanize("UserURIPreference"));
     try std.testing.expectEqualStrings("favorite uri", comptime comptimeHumanize("FavoriteURI"));
+    try std.testing.expectEqualStrings("favorite uri", comptime comptimeHumanize("Favorite___URI"));
 }

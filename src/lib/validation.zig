@@ -73,3 +73,35 @@ pub fn Errors(FieldParam: type) type {
         pub const Field = FieldParam;
     };
 }
+
+pub fn validatePresence(record: anytype, comptime fields: []const std.meta.FieldEnum(@TypeOf(record)), errors: *RecordErrors(@TypeOf(record))) !void {
+    fields: inline for (fields) |field| {
+        const field_type = std.meta.fieldInfo(@TypeOf(record), field).type;
+        const field_type_info = @typeInfo(field_type);
+
+        const possibly_opt_value = @field(record, @tagName(field));
+        const value = unwrap_optional: switch (field_type_info) {
+            .optional => {
+                if (possibly_opt_value == null) {
+                    try errors.addFieldError(field, .init(error.Required, "required"));
+                    continue :fields;
+                }
+                break :unwrap_optional possibly_opt_value.?;
+            },
+            else => break :unwrap_optional possibly_opt_value,
+        };
+        const value_type_info = @typeInfo(@TypeOf(value));
+        switch (value_type_info) {
+            .pointer => |pointer| {
+                if (pointer.size == .slice) {
+                    if (value.len == 0) {
+                        try errors.addFieldError(field, .init(error.Required, "required"));
+                    }
+                    continue :fields;
+                }
+            },
+            else => {},
+        }
+        @compileError("Cannot validate presence of type: " ++ @typeName(field_type));
+    }
+}
