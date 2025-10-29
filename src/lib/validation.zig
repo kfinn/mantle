@@ -7,6 +7,10 @@ pub const Error = struct {
     pub fn init(err: anyerror, description: []const u8) @This() {
         return .{ .err = err, .description = description };
     }
+
+    pub fn format(self: *const @This(), writer: *std.Io.Writer) !void {
+        try writer.print("{s} ({s})", .{ self.description, @tagName(self.err) });
+    }
 };
 
 pub fn RecordErrors(Record: type) type {
@@ -49,6 +53,7 @@ pub fn Errors(FieldParam: type) type {
                 field_errors.deinit(self.allocator);
             }
         }
+
         pub fn addBaseError(self: *@This(), validation_error: Error) !void {
             try self.base_errors.append(self.allocator, validation_error);
         }
@@ -71,6 +76,18 @@ pub fn Errors(FieldParam: type) type {
         }
 
         pub const Field = FieldParam;
+
+        pub fn format(self: *const @This(), writer: std.Io.Writer) !void {
+            for (self.base_errors.items) |base_error| {
+                writer.print("error: {f}\n", .{base_error});
+            }
+            for (self.field_errors.values, 0..) |field_errors, field_index| {
+                const field = @TypeOf(self.field_errors).Indexer.keyForIndex(field_index);
+                for (field_errors.items) |field_error| {
+                    std.log.err("{s} error: {f}", .{ @tagName(field), field_error });
+                }
+            }
+        }
     };
 }
 

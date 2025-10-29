@@ -173,38 +173,23 @@ pub fn CastResult(comptime T: type) type {
 fn ChangeSetAfterRelationAttributesCast(comptime relation: type, comptime ChangeSet: type) type {
     @setEvalBranchQuota(100000);
 
-    if (!@hasDecl(ChangeSet, "casts")) return ChangeSet;
-
-    const relation_fields = @typeInfo(relation.Attributes).@"struct".fields;
     const change_set_fields = @typeInfo(ChangeSet).@"struct".fields;
-
-    var change_set_after_cast_fields_buffer: [relation_fields.len]std.builtin.Type.StructField = undefined;
-    var next_change_set_after_cast_field_index = 0;
-    relation_field: inline for (relation_fields) |relation_field| {
-        if (std.meta.hasFn(ChangeSet.casts, relation_field.name)) {
-            change_set_after_cast_fields_buffer[next_change_set_after_cast_field_index] = .{
-                .name = relation_field.name,
-                .type = std.meta.fieldInfo(relation.Attributes, std.meta.stringToEnum(std.meta.FieldEnum(relation.Attributes), relation_field.name).?).type,
-                .default_value_ptr = null,
-                .is_comptime = false,
-                .alignment = relation_field.alignment,
-            };
-            next_change_set_after_cast_field_index += 1;
-            continue :relation_field;
-        }
-
-        for (change_set_fields) |change_set_field| {
+    const relation_fields = @typeInfo(relation.Attributes).@"struct".fields;
+    var fields: [relation_fields.len]std.builtin.Type.StructField = undefined;
+    var next_field_index = 0;
+    field: for (change_set_fields) |change_set_field| {
+        for (relation_fields) |relation_field| {
             if (std.mem.eql(u8, relation_field.name, change_set_field.name)) {
-                change_set_after_cast_fields_buffer[next_change_set_after_cast_field_index] = relation_field;
-                next_change_set_after_cast_field_index += 1;
-                continue :relation_field;
+                fields[next_field_index] = relation_field;
+                next_field_index += 1;
+                continue :field;
             }
         }
     }
 
     return @Type(.{ .@"struct" = .{
         .layout = .auto,
-        .fields = change_set_after_cast_fields_buffer[0..next_change_set_after_cast_field_index],
+        .fields = fields[0..next_field_index],
         .decls = &[_]std.builtin.Type.Declaration{},
         .is_tuple = false,
     } });
@@ -343,6 +328,15 @@ fn builtinCast(comptime ValueBeforeTypeCast: type, comptime field_after_type_cas
                             return .{ .failure = .init(err, "invalid number") };
                         }
                     },
+                    .@"struct" => {
+                        if (@hasDecl(optional.child, "castFromString")) {
+                            if (value_before_type_cast.len == 0) {
+                                return .{ .success = field_after_type_cast.defaultValue() orelse null };
+                            }
+                            return try optional.child.castFromString(value_before_type_cast);
+                        }
+                        @compileError("Cannot automatically cast type " ++ @typeName(ValueBeforeTypeCast) ++ " to " ++ @typeName(ValueAfterTypeCast));
+                    },
                     else => {
                         @compileError("Cannot automatically cast type " ++ @typeName(ValueBeforeTypeCast) ++ " to " ++ @typeName(ValueAfterTypeCast));
                     },
@@ -374,6 +368,13 @@ fn builtinCast(comptime ValueBeforeTypeCast: type, comptime field_after_type_cas
                     return .{ .failure = .init(err, "invalid number") };
                 }
             },
+            .@"struct" => {
+                if (@hasDecl(ValueAfterTypeCast, "castFromString")) {
+                    return try ValueAfterTypeCast.castFromString(value_before_type_cast);
+                }
+                @compileError("Cannot automatically cast type " ++ @typeName(ValueBeforeTypeCast) ++ " to " ++ @typeName(ValueAfterTypeCast));
+            },
+
             else => {
                 @compileError("Cannot automatically cast type " ++ @typeName(ValueBeforeTypeCast) ++ " to " ++ @typeName(ValueAfterTypeCast));
             },
@@ -452,6 +453,7 @@ fn updateFromRelation(self: *const @This(), comptime relation: type, id: primary
 }
 
 fn ChangeSetAfterDbCast(relation: type, ChangeSet: type) type {
+    @setEvalBranchQuota(100000);
     const to_db_casts = if (@hasDecl(relation, "to_db_casts")) relation.to_db_casts else struct {};
     const change_set_fields = std.meta.fields(ChangeSet);
     var fields: [change_set_fields.len]std.builtin.Type.StructField = undefined;
