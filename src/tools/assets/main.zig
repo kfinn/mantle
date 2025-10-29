@@ -91,6 +91,7 @@ fn generate(allocator: std.mem.Allocator, args: *std.process.ArgIterator) !void 
     const output_writer = &output_file_writer.interface;
 
     try output_writer.writeAll("const std = @import(\"std\");\n");
+    try output_writer.writeAll("const mantle = @import(\"mantle\");\n");
     {
         var digested_asset_paths_by_asset_path_iterator = digested_asset_paths_by_asset_path.iterator();
         try output_writer.writeAll("pub const All = std.StaticStringMap(void).initComptime(.{\n");
@@ -104,41 +105,24 @@ fn generate(allocator: std.mem.Allocator, args: *std.process.ArgIterator) !void 
 
     {
         var digested_asset_paths_by_asset_path_iterator = digested_asset_paths_by_asset_path.iterator();
-        try output_writer.writeAll(
-            \\ pub const import_map_tag =
-            \\     \\ <script type="importmap">
-            \\     \\   {
-            \\     \\     "imports": {
-            \\
-        );
+        try output_writer.writeAll("pub const import_map_entries = &[_]mantle.ImportMap.Entry{\n");
 
-        var needs_comma = false;
         while (digested_asset_paths_by_asset_path_iterator.next()) |entry| {
             const src_asset_path = entry.key_ptr.*;
             const extension = std.fs.path.extension(src_asset_path);
             if (!std.mem.eql(u8, extension, ".js")) continue;
-            if (needs_comma) {
-                try output_writer.writeAll(",\n");
-            }
-            try output_writer.writeAll("     \\\\       \"");
+
+            try output_writer.writeAll("  .init(\"");
             if (std.mem.endsWith(u8, src_asset_path, "/index.js")) {
                 try writeEscapedPath(output_writer, src_asset_path[0 .. src_asset_path.len - "/index.js".len]);
             } else {
                 try writeEscapedPath(output_writer, src_asset_path[0 .. src_asset_path.len - extension.len]);
             }
-            try output_writer.writeAll("\": \"/assets/");
+            try output_writer.writeAll("\", \"/assets/");
             try writeEscapedPath(output_writer, entry.value_ptr.*);
-            try output_writer.writeAll("\"");
-            needs_comma = true;
+            try output_writer.writeAll("\"),\n");
         }
-        try output_writer.writeAll(
-            \\
-            \\     \\     }
-            \\     \\   }
-            \\     \\ </script>
-            \\ ;
-            \\
-        );
+        try output_writer.writeAll("};\n");
     }
 
     {

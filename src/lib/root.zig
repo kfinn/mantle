@@ -15,3 +15,4 @@ pub const Resource = router_module.Resource;
 pub const Params = router_module.Params;
 pub const validation = @import("validation.zig");
 pub const view_helpers = @import("view_helpers.zig");
+pub const ImportMap = @import("ImportMap.zig");

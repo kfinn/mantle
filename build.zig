@@ -55,7 +55,10 @@ pub fn addAssetsImport(module: *std.Build.Module, options: AssetsImportOptions) 
     _ = assets_generate_step.addDepFileOutputArg("assets.d");
     assets_generate_step.addFileInput(assets_list_only_output);
 
-    const assets_mod = b.createModule(.{ .root_source_file = assets_zig_output });
+    var assets_mod = b.createModule(.{
+        .root_source_file = assets_zig_output,
+    });
+    assets_mod.addImport("mantle", module.import_table.get("mantle").?);
     module.addImport(options.import_name, assets_mod);
 
     const install_assets = b.addInstallDirectory(.{
