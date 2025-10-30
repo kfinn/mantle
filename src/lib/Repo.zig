@@ -163,13 +163,6 @@ pub fn create(self: *const @This(), comptime relation: type, change_set: anytype
     }
 }
 
-pub fn CastResult(comptime T: type) type {
-    return union(enum) {
-        success: T,
-        failure,
-    };
-}
-
 fn ChangeSetAfterRelationAttributesCast(comptime relation: type, comptime ChangeSet: type) type {
     @setEvalBranchQuota(100000);
 
@@ -289,96 +282,91 @@ fn typeCastedChangeSetToInsert(
     return .{ .change_set = try changeSetAfterDbCast(self, relation, change_set) };
 }
 
-fn BuiltinCastResult(comptime ValueAfterTypeCast: type) type {
+pub fn CastResult(comptime ValueAfterTypeCast: type) type {
     return union(enum) {
         success: ValueAfterTypeCast,
         failure: validation.Error,
     };
 }
 
-fn builtinCast(comptime ValueBeforeTypeCast: type, comptime field_after_type_cast: std.builtin.Type.StructField, value_before_type_cast: ValueBeforeTypeCast) !BuiltinCastResult(field_after_type_cast.type) {
+fn builtinCast(comptime ValueBeforeTypeCast: type, comptime field_after_type_cast: std.builtin.Type.StructField, value_before_type_cast: ValueBeforeTypeCast) !CastResult(field_after_type_cast.type) {
     const ValueAfterTypeCast = field_after_type_cast.type;
-    if (ValueBeforeTypeCast == ValueAfterTypeCast) {
-        return .{ .success = value_before_type_cast };
-    }
-    if (ValueBeforeTypeCast == []const u8) {
-        switch (@typeInfo(ValueAfterTypeCast)) {
-            .optional => |optional| {
-                if (optional.child == ValueBeforeTypeCast) {
-                    return .{ .success = value_before_type_cast };
+    switch (@typeInfo(ValueAfterTypeCast)) {
+        .@"struct" => {
+            if (@hasDecl(ValueAfterTypeCast, "castFromInput")) {
+                return try ValueAfterTypeCast.castFromInput(value_before_type_cast);
+            }
+        },
+        .optional => |optional| {
+            if (optional.child == ValueBeforeTypeCast) {
+                return .{ .success = value_before_type_cast };
+            }
+            if (@hasDecl(optional.child, "castFromInput") and @hasDecl(optional.child, "isOptionalInputPresent")) {
+                if (try optional.child.isOptionalInputPresent(value_before_type_cast)) {
+                    return switch (try optional.child.castFromInput(value_before_type_cast)) {
+                        .success => |success| .{ .success = success },
+                        .failure => |failure| .{ .failure = failure },
+                    };
                 }
-                switch (@typeInfo(optional.child)) {
-                    .int => {
-                        if (value_before_type_cast.len == 0) {
-                            return .{ .success = field_after_type_cast.defaultValue() orelse null };
-                        }
-                        if (std.fmt.parseInt(optional.child, value_before_type_cast, 10)) |value_after_type_cast| {
-                            return .{ .success = value_after_type_cast };
-                        } else |err| {
-                            return .{ .failure = .init(err, "invalid number") };
-                        }
-                    },
-                    .float => {
-                        if (value_before_type_cast.len == 0) {
-                            return .{ .success = field_after_type_cast.defaultValue() orelse null };
-                        }
-                        if (std.fmt.parseFloat(optional.child, value_before_type_cast)) |value_after_type_cast| {
-                            return .{ .success = value_after_type_cast };
-                        } else |err| {
-                            return .{ .failure = .init(err, "invalid number") };
-                        }
-                    },
-                    .@"struct" => {
-                        if (@hasDecl(optional.child, "castFromString")) {
-                            if (value_before_type_cast.len == 0) {
-                                return .{ .success = field_after_type_cast.defaultValue() orelse null };
-                            }
-                            return try optional.child.castFromString(value_before_type_cast);
-                        }
-                        @compileError("Cannot automatically cast type " ++ @typeName(ValueBeforeTypeCast) ++ " to " ++ @typeName(ValueAfterTypeCast));
-                    },
-                    else => {
-                        @compileError("Cannot automatically cast type " ++ @typeName(ValueBeforeTypeCast) ++ " to " ++ @typeName(ValueAfterTypeCast));
-                    },
-                }
-            },
-            .int => {
-                if (value_before_type_cast.len == 0) {
-                    if (field_after_type_cast.defaultValue()) |default_value| {
-                        return .{ .success = default_value };
+                return .{ .success = field_after_type_cast.defaultValue() orelse null };
+            }
+            switch (@typeInfo(optional.child)) {
+                .int => {
+                    if (value_before_type_cast.len == 0) {
+                        return .{ .success = field_after_type_cast.defaultValue() orelse null };
                     }
-                    return .{ .failure = .init(error.Required, "required") };
-                }
-                if (std.fmt.parseInt(ValueAfterTypeCast, value_before_type_cast, 10)) |value_after_type_cast| {
-                    return .{ .success = value_after_type_cast };
-                } else |err| {
-                    return .{ .failure = .init(err, "invalid number") };
-                }
-            },
-            .float => {
-                if (value_before_type_cast.len == 0) {
-                    if (field_after_type_cast.defaultValue()) |default_value| {
-                        return .{ .success = default_value };
+                    if (std.fmt.parseInt(optional.child, value_before_type_cast, 10)) |value_after_type_cast| {
+                        return .{ .success = value_after_type_cast };
+                    } else |err| {
+                        return .{ .failure = .init(err, "invalid number") };
                     }
-                    return .{ .failure = .init(error.Required, "required") };
+                },
+                .float => {
+                    if (value_before_type_cast.len == 0) {
+                        return .{ .success = field_after_type_cast.defaultValue() orelse null };
+                    }
+                    if (std.fmt.parseFloat(optional.child, value_before_type_cast)) |value_after_type_cast| {
+                        return .{ .success = value_after_type_cast };
+                    } else |err| {
+                        return .{ .failure = .init(err, "invalid number") };
+                    }
+                },
+                else => {
+                    @compileError("Cannot automatically cast type " ++ @typeName(ValueBeforeTypeCast) ++ " to " ++ @typeName(ValueAfterTypeCast));
+                },
+            }
+        },
+        .int => {
+            if (value_before_type_cast.len == 0) {
+                if (field_after_type_cast.defaultValue()) |default_value| {
+                    return .{ .success = default_value };
                 }
-                if (std.fmt.parseFloat(ValueAfterTypeCast, value_before_type_cast)) |value_after_type_cast| {
-                    return .{ .success = value_after_type_cast };
-                } else |err| {
-                    return .{ .failure = .init(err, "invalid number") };
+                return .{ .failure = .init(error.Required, "required") };
+            }
+            if (std.fmt.parseInt(ValueAfterTypeCast, value_before_type_cast, 10)) |value_after_type_cast| {
+                return .{ .success = value_after_type_cast };
+            } else |err| {
+                return .{ .failure = .init(err, "invalid number") };
+            }
+            return .{ .failure = .init(error.InvalidNumber, "invalid number") };
+        },
+        .float => {
+            if (value_before_type_cast.len == 0) {
+                if (field_after_type_cast.defaultValue()) |default_value| {
+                    return .{ .success = default_value };
                 }
-            },
-            .@"struct" => {
-                if (@hasDecl(ValueAfterTypeCast, "castFromString")) {
-                    return try ValueAfterTypeCast.castFromString(value_before_type_cast);
-                }
-                @compileError("Cannot automatically cast type " ++ @typeName(ValueBeforeTypeCast) ++ " to " ++ @typeName(ValueAfterTypeCast));
-            },
-
-            else => {
-                @compileError("Cannot automatically cast type " ++ @typeName(ValueBeforeTypeCast) ++ " to " ++ @typeName(ValueAfterTypeCast));
-            },
-        }
+                return .{ .failure = .init(error.Required, "required") };
+            }
+            if (std.fmt.parseFloat(ValueAfterTypeCast, value_before_type_cast)) |value_after_type_cast| {
+                return .{ .success = value_after_type_cast };
+            } else |err| {
+                return .{ .failure = .init(err, "invalid number") };
+            }
+            return .{ .failure = .init(error.InvalidNumber, "invalid number") };
+        },
+        else => {
+            return .{ .success = value_before_type_cast };
+        },
     }
 }
 
