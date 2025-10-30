@@ -9,7 +9,7 @@ pub const Error = struct {
     }
 
     pub fn format(self: *const @This(), writer: *std.Io.Writer) !void {
-        try writer.print("{s} ({s})", .{ self.description, @tagName(self.err) });
+        try writer.print("{s} ({s})", .{ self.description, @errorName(self.err) });
     }
 };
 
