@@ -24,7 +24,7 @@ fn RouteParams(comptime param_names: []const [:0]const u8) type {
                 .type = []const u8,
                 .default_value_ptr = null,
                 .is_comptime = false,
-                .alignment = 0,
+                .alignment = 1,
             };
         }
         const decls = [_]std.builtin.Type.Declaration{};
@@ -152,27 +152,20 @@ pub fn Router(comptime App: type, comptime comptime_options: ComptimeOptions) ty
                 }
                 return false;
             }
-            const escaped_id_path_segment, const rest_path_segments = splitFirstPathSegment(path_segments_after_name);
+
+            const escaped_action_path_segment, const rest_path_segments = splitFirstPathSegment(path_segments_after_name);
             if (rest_path_segments.len == 0) {
-                const id_path_segment = try cgi_escape.unescapeUriComponentAlloc(request.arena, escaped_id_path_segment);
+                const action_path_segment = try cgi_escape.unescapeUriComponentAlloc(request.arena, escaped_action_path_segment);
                 switch (request.method) {
                     .GET => {
-                        if (std.mem.eql(u8, id_path_segment, "new") and std.meta.hasFn(resource.Controller, "new")) {
-                            try self.performControllerAction(resource.Controller, "new", request, response, route_params);
-                            return true;
-                        }
-                        if (std.mem.eql(u8, id_path_segment, "edit") and std.meta.hasFn(resource.Controller, "edit")) {
+                        if (std.mem.eql(u8, action_path_segment, "edit") and std.meta.hasFn(resource.Controller, "edit")) {
                             try self.performControllerAction(resource.Controller, "edit", request, response, route_params);
                             return true;
                         }
                         return false;
                     },
                     .POST => {
-                        if (std.mem.eql(u8, id_path_segment, "new") and std.meta.hasFn(resource.Controller, "create")) {
-                            try self.performControllerAction(resource.Controller, "create", request, response, route_params);
-                            return true;
-                        }
-                        if (std.mem.eql(u8, id_path_segment, "edit") and std.meta.hasFn(resource.Controller, "update")) {
+                        if (std.mem.eql(u8, action_path_segment, "edit") and std.meta.hasFn(resource.Controller, "update")) {
                             try self.performControllerAction(resource.Controller, "update", request, response, route_params);
                             return true;
                         }
@@ -184,7 +177,7 @@ pub fn Router(comptime App: type, comptime comptime_options: ComptimeOptions) ty
             }
 
             if (resource.routes) |child_routes| {
-                return try self.handleRouteEntries(request, response, child_routes, rest_path_segments, route_params);
+                return try self.handleRouteEntries(request, response, child_routes, path_segments_after_name, route_params);
             }
             return false;
         }
@@ -213,33 +206,25 @@ pub fn Router(comptime App: type, comptime comptime_options: ComptimeOptions) ty
                 return false;
             }
 
-            const escaped_id_path_segment, const rest_path_segments = splitFirstPathSegment(path_segments_after_name);
-            const id_path_segment = try cgi_escape.unescapeUriComponentAlloc(request.arena, escaped_id_path_segment);
+            const escaped_action_or_id_path_segment, const path_segments_after_action_or_id = splitFirstPathSegment(path_segments_after_name);
+            const action_or_id_path_segment = try cgi_escape.unescapeUriComponentAlloc(request.arena, escaped_action_or_id_path_segment);
 
-            if (rest_path_segments.len == 0) {
+            if (path_segments_after_action_or_id.len == 0) {
                 switch (request.method) {
                     .GET => {
-                        if (std.mem.eql(u8, id_path_segment, "new") and std.meta.hasFn(resources.Controller, "new")) {
+                        if (std.mem.eql(u8, action_or_id_path_segment, "new") and std.meta.hasFn(resources.Controller, "new")) {
                             try self.performControllerAction(resources.Controller, "new", request, response, route_params);
                             return true;
                         }
-                        if (std.mem.eql(u8, id_path_segment, "edit") and std.meta.hasFn(resources.Controller, "edit")) {
-                            try self.performControllerAction(resources.Controller, "edit", request, response, route_params);
-                            return true;
-                        }
                         if (std.meta.hasFn(resources.Controller, "show")) {
-                            const route_params_with_id = extendRouteParams(@TypeOf(route_params), "id", route_params, id_path_segment);
+                            const route_params_with_id = extendRouteParams(@TypeOf(route_params), "id", route_params, action_or_id_path_segment);
                             try self.performControllerAction(resources.Controller, "show", request, response, route_params_with_id);
                             return true;
                         }
                     },
                     .POST => {
-                        if (std.mem.eql(u8, id_path_segment, "new") and std.meta.hasFn(resources.Controller, "create")) {
+                        if (std.mem.eql(u8, action_or_id_path_segment, "new") and std.meta.hasFn(resources.Controller, "create")) {
                             try self.performControllerAction(resources.Controller, "create", request, response, route_params);
-                            return true;
-                        }
-                        if (std.mem.eql(u8, id_path_segment, "edit") and std.meta.hasFn(resources.Controller, "update")) {
-                            try self.performControllerAction(resources.Controller, "update", request, response, route_params);
                             return true;
                         }
                     },
@@ -247,11 +232,36 @@ pub fn Router(comptime App: type, comptime comptime_options: ComptimeOptions) ty
                 }
                 return false;
             }
+
+            const id_path_segment = action_or_id_path_segment;
+            const escaped_action_path_segment, const path_segments_after_action = splitFirstPathSegment(path_segments_after_action_or_id);
+            const action_path_segment = try cgi_escape.unescapeUriComponentAlloc(request.arena, escaped_action_path_segment);
+            if (path_segments_after_action.len == 0) {
+                switch (request.method) {
+                    .GET => {
+                        if (std.mem.eql(u8, action_path_segment, "edit") and std.meta.hasFn(resources.Controller, "edit")) {
+                            const routes_params_with_id = extendRouteParams(@TypeOf(route_params), "id", route_params, id_path_segment);
+                            try self.performControllerAction(resources.Controller, "edit", request, response, routes_params_with_id);
+                            return true;
+                        }
+                    },
+                    .POST => {
+                        if (std.mem.eql(u8, action_path_segment, "edit") and std.meta.hasFn(resources.Controller, "update")) {
+                            const routes_params_with_id = extendRouteParams(@TypeOf(route_params), "id", route_params, id_path_segment);
+                            try self.performControllerAction(resources.Controller, "update", request, response, routes_params_with_id);
+                            return true;
+                        }
+                    },
+                    else => {},
+                }
+                return false;
+            }
+
             if (resources.routes) |child_routes| {
                 const param_name = comptime std.fmt.comptimePrint("{s}_id", .{inflector.comptimeSingularize(resources.name)});
                 const nested_route_param_names = comptime comptimeExtendParamNames(route_param_names, param_name);
-                const route_params_with_id = extendRouteParams(@TypeOf(route_params), param_name, route_params, id_path_segment);
-                return try self.handleRouteEntries(nested_route_param_names, request, response, child_routes, rest_path_segments, route_params_with_id);
+                const route_params_with_id = extendRouteParams(@TypeOf(route_params), param_name, route_params, action_or_id_path_segment);
+                return try self.handleRouteEntries(nested_route_param_names, request, response, child_routes, path_segments_after_action_or_id, route_params_with_id);
             }
             return false;
         }
