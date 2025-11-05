@@ -34,16 +34,10 @@ pub fn Errors(FieldParam: type) type {
         field_errors: std.EnumArray(Field, std.ArrayList(Error)),
 
         pub fn init(allocator: std.mem.Allocator) @This() {
-            var field_errors = std.EnumArray(Field, std.ArrayList(Error)).initUndefined();
-            var field_errors_iterator = field_errors.iterator();
-            while (field_errors_iterator.next()) |entry| {
-                field_errors.set(entry.key, .{});
-            }
-
             return .{
                 .allocator = allocator,
                 .base_errors = .{},
-                .field_errors = field_errors,
+                .field_errors = std.EnumArray(Field, std.ArrayList(Error)).initFill(.{}),
             };
         }
 
@@ -77,14 +71,14 @@ pub fn Errors(FieldParam: type) type {
 
         pub const Field = FieldParam;
 
-        pub fn format(self: *const @This(), writer: std.Io.Writer) !void {
+        pub fn format(self: *const @This(), writer: *std.Io.Writer) !void {
             for (self.base_errors.items) |base_error| {
-                writer.print("error: {f}\n", .{base_error});
+                try writer.print("error: {f}\n", .{base_error});
             }
             for (self.field_errors.values, 0..) |field_errors, field_index| {
                 const field = @TypeOf(self.field_errors).Indexer.keyForIndex(field_index);
                 for (field_errors.items) |field_error| {
-                    std.log.err("{s} error: {f}", .{ @tagName(field), field_error });
+                    try writer.print("{s} error: {f}", .{ @tagName(field), field_error });
                 }
             }
         }
