@@ -60,7 +60,8 @@ fn ExtendedRouteParams(comptime OldRouteParmas: type, comptime new_param_name: [
     return RouteParams(param_names);
 }
 
-fn extendRouteParams(comptime OldRouteParams: type, comptime new_param_name: [:0]const u8, old_route_params: OldRouteParams, new_param_value: []const u8) ExtendedRouteParams(OldRouteParams, new_param_name) {
+fn extendRouteParams(old_route_params: anytype, comptime new_param_name: [:0]const u8, new_param_value: []const u8) ExtendedRouteParams(@TypeOf(old_route_params), new_param_name) {
+    const OldRouteParams = @TypeOf(old_route_params);
     var extended_route_params: ExtendedRouteParams(OldRouteParams, new_param_name) = undefined;
     inline for (std.meta.fieldNames(OldRouteParams)) |field_name| {
         @field(extended_route_params, field_name) = @field(old_route_params, field_name);
@@ -76,7 +77,6 @@ pub fn Router(comptime App: type, comptime comptime_options: ComptimeOptions) ty
             response.body = "Internal Error";
         }
 
-        const empty_param_names: [0][:0]const u8 = .{};
         pub fn handle(self: *@This(), request: *httpz.Request, response: *httpz.Response) void {
             std.log.info("Handling {s} request for {s}", .{ @tagName(request.method), request.url.path });
 
@@ -98,6 +98,7 @@ pub fn Router(comptime App: type, comptime comptime_options: ComptimeOptions) ty
                 }
             }
 
+            const empty_param_names: [0][:0]const u8 = .{};
             if (self.handleRouteEntries(&empty_param_names, request, response, comptime_options.routes, request.url.path[1..], .{})) |handled| {
                 if (handled) return;
             } else |err| {
@@ -217,7 +218,7 @@ pub fn Router(comptime App: type, comptime comptime_options: ComptimeOptions) ty
                             return true;
                         }
                         if (std.meta.hasFn(resources.Controller, "show")) {
-                            const route_params_with_id = extendRouteParams(@TypeOf(route_params), "id", route_params, action_or_id_path_segment);
+                            const route_params_with_id = extendRouteParams(route_params, "id", action_or_id_path_segment);
                             try self.performControllerAction(resources.Controller, "show", request, response, route_params_with_id);
                             return true;
                         }
@@ -240,14 +241,14 @@ pub fn Router(comptime App: type, comptime comptime_options: ComptimeOptions) ty
                 switch (request.method) {
                     .GET => {
                         if (std.mem.eql(u8, action_path_segment, "edit") and std.meta.hasFn(resources.Controller, "edit")) {
-                            const routes_params_with_id = extendRouteParams(@TypeOf(route_params), "id", route_params, id_path_segment);
+                            const routes_params_with_id = extendRouteParams(route_params, "id", id_path_segment);
                             try self.performControllerAction(resources.Controller, "edit", request, response, routes_params_with_id);
                             return true;
                         }
                     },
                     .POST => {
                         if (std.mem.eql(u8, action_path_segment, "edit") and std.meta.hasFn(resources.Controller, "update")) {
-                            const routes_params_with_id = extendRouteParams(@TypeOf(route_params), "id", route_params, id_path_segment);
+                            const routes_params_with_id = extendRouteParams(route_params, "id", id_path_segment);
                             try self.performControllerAction(resources.Controller, "update", request, response, routes_params_with_id);
                             return true;
                         }
@@ -260,7 +261,7 @@ pub fn Router(comptime App: type, comptime comptime_options: ComptimeOptions) ty
             if (resources.routes) |child_routes| {
                 const param_name = comptime std.fmt.comptimePrint("{s}_id", .{inflector.comptimeSingularize(resources.name)});
                 const nested_route_param_names = comptime comptimeExtendParamNames(route_param_names, param_name);
-                const route_params_with_id = extendRouteParams(@TypeOf(route_params), param_name, route_params, action_or_id_path_segment);
+                const route_params_with_id = extendRouteParams(route_params, param_name, action_or_id_path_segment);
                 return try self.handleRouteEntries(nested_route_param_names, request, response, child_routes, path_segments_after_action_or_id, route_params_with_id);
             }
             return false;

@@ -1,7 +1,11 @@
 pub const escape = @import("sql/escape.zig");
 pub const insert = @import("sql/insert.zig");
+pub const Insert = insert.Insert;
 pub const Into = @import("sql/Into.zig");
 pub const Output = @import("sql/Output.zig");
 pub const select = @import("sql/select.zig");
+pub const Select = select.Select;
 pub const update = @import("sql/update.zig");
+pub const Update = update.Update;
 pub const where = @import("sql/where.zig");
+pub const Where = where.Where;

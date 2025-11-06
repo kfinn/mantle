@@ -1,16 +1,16 @@
 const std = @import("std");
 
+const meta = @import("../meta.zig");
 const escape = @import("escape.zig");
 const Output = @import("Output.zig");
 const where = @import("where.zig");
-const meta = @import("../meta.zig");
 
 pub const From = struct {
     expression: []const u8,
-    name: ?[]const u8,
+    name: ?[]const u8 = null,
 
     pub fn fromTable(table_name: []const u8) @This() {
-        return .{ .expression = table_name, .name = null };
+        return .{ .expression = table_name };
     }
 
     pub fn writeToSql(self: *const @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
@@ -44,7 +44,10 @@ pub fn Select(
     comptime outputs_param: []const Output,
     comptime from_param: From,
     comptime WhereParam: type,
-    comptime has_limit_param: bool,
+    comptime opts: struct {
+        has_limit: bool = false,
+        has_offset: bool = false,
+    },
 ) type {
     @setEvalBranchQuota(10000);
 
@@ -52,23 +55,29 @@ pub fn Select(
         pub const outputs = outputs_param;
         pub const from = from_param;
         pub const Where = WhereParam;
-        pub const has_limit = has_limit_param;
+        pub const has_limit = opts.has_limit;
+        pub const has_offset = opts.has_offset;
         pub const Params = params: {
-            if (!has_limit_param) {
-                break :params WhereParam.Params;
-            }
-
             const where_param_fields = @typeInfo(WhereParam.Params).@"struct".fields;
-            var types: [where_param_fields.len + 1]type = undefined;
+            var types: [where_param_fields.len + (if (opts.has_limit) 1 else 0) + (if (opts.has_offset) 1 else 0)]type = undefined;
             for (where_param_fields, 0..) |where_param_field, index| {
                 types[index] = where_param_field.type;
             }
-            types[where_param_fields.len] = usize;
+            var next_field_index = where_param_fields.len;
+            if (opts.has_limit) {
+                types[next_field_index] = usize;
+                next_field_index += 1;
+            }
+            if (opts.has_offset) {
+                types[next_field_index] = usize;
+                next_field_index += 1;
+            }
             break :params std.meta.Tuple(&types);
         };
 
         where: Where,
         limit: if (has_limit) usize else void,
+        offset: if (has_offset) usize else void,
 
         pub fn merge(self: *const @This(), rhs: anytype, comptime operator: []const u8) Merged(@This(), @TypeOf(rhs), operator) {
             var limit: ?usize = self.limit;
@@ -79,12 +88,21 @@ pub fn Select(
                     limit = rhs_limit;
                 }
             }
+            var offset: ?usize = self.offset;
+            if (rhs.offset) |rhs_offset| {
+                if (offset) |self_offset| {
+                    offset = @min(self_offset, rhs_offset);
+                } else {
+                    offset = rhs_offset;
+                }
+            }
 
             return .{
                 .outputs = self.outputs,
                 .from = self.from,
                 .where = self.where.merge(rhs.where),
                 .limit = limit,
+                .offset = offset,
             };
         }
 
@@ -105,6 +123,10 @@ pub fn Select(
             try Where.writeToSql(writer, &next_placeholder);
             if (has_limit) {
                 try writer.print(" LIMIT ${d}", .{next_placeholder});
+                next_placeholder += 1;
+            }
+            if (has_offset) {
+                try writer.print(" OFFSET ${d}", .{next_placeholder});
                 next_placeholder += 1;
             }
         }
@@ -131,10 +153,16 @@ pub fn Select(
         }
 
         pub fn params(self: *const @This()) Params {
-            if (!has_limit) {
-                return self.where.params;
+            if (has_limit and has_offset) {
+                return meta.mergeTuples(self.where.params, .{ self.limit, self.offset });
             }
-            return meta.mergeTuples(self.where.params, .{self.limit});
+            if (has_limit) {
+                return meta.mergeTuples(self.where.params, .{self.limit});
+            }
+            if (has_offset) {
+                return meta.mergeTuples(self.where.params, .{self.offset});
+            }
+            return self.where.params;
         }
     };
 }

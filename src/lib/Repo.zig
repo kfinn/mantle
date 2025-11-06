@@ -53,7 +53,11 @@ pub fn find(self: *const @This(), comptime relation: type, id: primaryKeyType(re
 }
 
 pub fn findBy(self: *const @This(), comptime relation: type, params: anytype) !?relationResultType(relation) {
-    const select = selectFromRelation(relation, sql.where.fromParams(params), 1);
+    const select = selectFromRelation(
+        relation,
+        sql.where.fromParams(params),
+        .{ .limit = 1 },
+    );
     var opt_row = try self.conn.rowOpts(
         @TypeOf(select).toSql(),
         select.params(),
@@ -68,7 +72,11 @@ pub fn findBy(self: *const @This(), comptime relation: type, params: anytype) !?
 }
 
 pub fn all(self: *const @This(), comptime relation: type) ![]relationResultType(relation) {
-    const select = selectFromRelation(relation, sql.where.Where("TRUE", std.meta.Tuple(&[_]type{})){ .params = .{} }, null);
+    const select = selectFromRelation(
+        relation,
+        sql.Where("TRUE", std.meta.Tuple(&[_]type{})){ .params = .{} },
+        .{},
+    );
     var query_result = try self.conn.queryOpts(
         @TypeOf(select).toSql(),
         select.params(),
@@ -82,7 +90,14 @@ pub fn all(self: *const @This(), comptime relation: type) ![]relationResultType(
     return try array_list.toOwnedSlice(self.allocator);
 }
 
-fn SelectFromRelation(comptime relation: type, comptime WhereParam: ?type, has_limit: bool) type {
+fn SelectFromRelation(
+    comptime relation: type,
+    comptime WhereParam: ?type,
+    comptime opts: struct {
+        has_limit: bool,
+        has_offset: bool,
+    },
+) type {
     @setEvalBranchQuota(100000);
 
     const outputs = comptime outputs: {
@@ -96,22 +111,33 @@ fn SelectFromRelation(comptime relation: type, comptime WhereParam: ?type, has_l
 
     return sql.select.Select(
         &outputs,
-        if (@hasField(relation, "from")) relation.from else .fromTable(relativeTypeName(@typeName(relation))),
+        if (@hasDecl(relation, "from")) relation.from else .fromTable(relativeTypeName(@typeName(relation))),
         WhereParam orelse sql.where.Where("TRUE", std.meta.Tuple(&[_]type{})),
-        has_limit,
+        .{
+            .has_limit = opts.has_limit,
+            .has_offset = opts.has_offset,
+        },
     );
 }
 
-fn selectFromRelation(comptime relation: type, where: anytype, comptime opt_limit: ?usize) SelectFromRelation(
+fn selectFromRelation(
+    comptime relation: type,
+    where: anytype,
+    opts: anytype,
+) SelectFromRelation(
     relation,
     @TypeOf(where),
-    if (opt_limit) |_| true else false,
+    .{
+        .has_limit = @hasField(@TypeOf(opts), "limit"),
+        .has_offset = @hasField(@TypeOf(opts), "offset"),
+    },
 ) {
     @setEvalBranchQuota(100000);
 
     return .{
         .where = where,
-        .limit = if (opt_limit) |limit| limit else void{},
+        .limit = if (@hasField(@TypeOf(opts), "limit")) opts.limit else void{},
+        .offset = if (@hasField(@TypeOf(opts), "offset")) opts.offset else void{},
     };
 }
 
@@ -217,8 +243,8 @@ fn InsertFromRelation(comptime relation: type, comptime ChangeSet: type) type {
     }
     const returning = returning_buf;
 
-    return sql.insert.Insert(
-        if (@hasField(relation, "from")) relation.from else .fromTable(relativeTypeName(@typeName(relation))),
+    return sql.Insert(
+        if (@hasDecl(relation, "from")) relation.from else .fromTable(relativeTypeName(@typeName(relation))),
         ChangeSetAfterDbCast(relation, ChangeSet),
         &returning,
     );
@@ -473,10 +499,10 @@ fn UpdateFromRelation(comptime relation: type, comptime ChangeSet: type) type {
     }
     const returning = returning_buf;
 
-    return sql.update.Update(
-        if (@hasField(relation, "from")) relation.from else .fromTable(relativeTypeName(@typeName(relation))),
+    return sql.Update(
+        if (@hasDecl(relation, "from")) relation.from else .fromTable(relativeTypeName(@typeName(relation))),
         ChangeSetAfterDbCast(relation, ChangeSet),
-        sql.where.Where("id = ?", struct { primaryKeyType(relation) }),
+        sql.Where("id = ?", struct { primaryKeyType(relation) }),
         &returning,
     );
 }
