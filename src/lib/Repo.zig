@@ -55,8 +55,10 @@ pub fn find(self: *const @This(), comptime relation: type, id: primaryKeyType(re
 pub fn findBy(self: *const @This(), comptime relation: type, params: anytype) !?relationResultType(relation) {
     const select = selectFromRelation(
         relation,
-        sql.where.fromParams(params),
-        .{ .limit = 1 },
+        .{
+            .where = sql.where.fromParams(params),
+            .limit = 1,
+        },
     );
     var opt_row = try self.conn.rowOpts(
         @TypeOf(select).toSql(),
@@ -71,63 +73,79 @@ pub fn findBy(self: *const @This(), comptime relation: type, params: anytype) !?
     return null;
 }
 
-pub fn all(self: *const @This(), comptime relation: type) ![]relationResultType(relation) {
-    const select = selectFromRelation(
-        relation,
-        sql.Where("TRUE", std.meta.Tuple(&[_]type{})){ .params = .{} },
-        .{},
-    );
-    var query_result = try self.conn.queryOpts(
+pub fn all(self: *const @This(), comptime relation: type, opts: anytype) ![]relationResultType(relation) {
+    const select = selectFromRelation(relation, opts);
+    if (self.conn.queryOpts(
         @TypeOf(select).toSql(),
         select.params(),
         .{ .allocator = self.allocator },
-    );
-    defer query_result.deinit();
-    var array_list: std.ArrayList(relationResultType(relation)) = .{};
-    while (try query_result.next()) |row| {
-        try array_list.append(self.allocator, try self.rowToRelationResult(relation, &row));
+    )) |query_result| {
+        defer query_result.deinit();
+        var array_list: std.ArrayList(relationResultType(relation)) = .{};
+        while (try query_result.next()) |row| {
+            try array_list.append(self.allocator, try self.rowToRelationResult(relation, &row));
+        }
+        return try array_list.toOwnedSlice(self.allocator);
+    } else |err| {
+        switch (err) {
+            error.PG => {
+                if (self.conn.err) |pg_err| {
+                    std.log.err("PG {s}\n", .{pg_err.message});
+                }
+            },
+            else => {},
+        }
+        return err;
     }
-    return try array_list.toOwnedSlice(self.allocator);
+}
+
+fn OutputListFromRelation(comptime relation: type) type {
+    const output_types: []const type = comptime output_types: {
+        const fields = @typeInfo(RelationAttributesBeforeDbCast(relation)).@"struct".fields;
+        var types_buf: [fields.len]type = undefined;
+        for (fields, 0..) |field, field_index| {
+            types_buf[field_index] = sql.output.Column(field.name);
+        }
+        const types = types_buf;
+        break :output_types &types;
+    };
+    return sql.OutputList(output_types);
+}
+
+fn outputListFromRelation(comptime relation: type) OutputListFromRelation(relation) {
+    var outputList: OutputListFromRelation(relation) = undefined;
+    inline for (@typeInfo(@TypeOf(outputList.outputs)).@"struct".fields) |field| {
+        @field(outputList.outputs, field.name) = .{ .expression = .{ .params = .{} } };
+    }
+    return outputList;
 }
 
 fn SelectFromRelation(
     comptime relation: type,
-    comptime WhereParam: ?type,
     comptime opts: struct {
+        Where: ?type,
         has_limit: bool,
         has_offset: bool,
     },
 ) type {
     @setEvalBranchQuota(100000);
 
-    const outputs = comptime outputs: {
-        const fields = @typeInfo(RelationAttributesBeforeDbCast(relation)).@"struct".fields;
-        var outputs_buf: [fields.len]sql.Output = undefined;
-        for (fields, 0..) |field, field_index| {
-            outputs_buf[field_index] = .fromColumn(field.name);
-        }
-        break :outputs outputs_buf;
-    };
-
-    return sql.select.Select(
-        &outputs,
-        if (@hasDecl(relation, "from")) relation.from else .fromTable(relativeTypeName(@typeName(relation))),
-        WhereParam orelse sql.where.Where("TRUE", std.meta.Tuple(&[_]type{})),
-        .{
-            .has_limit = opts.has_limit,
-            .has_offset = opts.has_offset,
-        },
-    );
+    return sql.Select(.{
+        .OutputList = OutputListFromRelation(relation),
+        .From = sql.from.Table(relativeTypeName(@typeName(relation))),
+        .Where = opts.Where,
+        .has_limit = opts.has_limit,
+        .has_offset = opts.has_offset,
+    });
 }
 
 fn selectFromRelation(
     comptime relation: type,
-    where: anytype,
     opts: anytype,
 ) SelectFromRelation(
     relation,
-    @TypeOf(where),
     .{
+        .Where = if (@hasField(@TypeOf(opts), "where")) @TypeOf(opts.where) else null,
         .has_limit = @hasField(@TypeOf(opts), "limit"),
         .has_offset = @hasField(@TypeOf(opts), "offset"),
     },
@@ -135,9 +153,11 @@ fn selectFromRelation(
     @setEvalBranchQuota(100000);
 
     return .{
-        .where = where,
-        .limit = if (@hasField(@TypeOf(opts), "limit")) opts.limit else void{},
-        .offset = if (@hasField(@TypeOf(opts), "offset")) opts.offset else void{},
+        .output_list = outputListFromRelation(relation),
+        .from = .{ .expression = .{ .params = .{} } },
+        .where = if (@hasField(@TypeOf(opts), "where")) opts.where else .{},
+        .limit = if (@hasField(@TypeOf(opts), "limit")) .{ .expression = .{ .params = .{opts.limit} } } else .{},
+        .offset = if (@hasField(@TypeOf(opts), "offset")) .{ .expression = .{ .params = .{opts.offset} } } else .{},
     };
 }
 
@@ -236,18 +256,11 @@ fn ChangeSetAfterRelationAttributesCast(comptime relation: type, comptime Change
 fn InsertFromRelation(comptime relation: type, comptime ChangeSet: type) type {
     @setEvalBranchQuota(100000);
 
-    const relation_fields = @typeInfo(relation.Attributes).@"struct".fields;
-    var returning_buf: [relation_fields.len]sql.Output = undefined;
-    for (relation_fields, 0..) |field, index| {
-        returning_buf[index] = .fromColumn(field.name);
-    }
-    const returning = returning_buf;
-
-    return sql.Insert(
-        if (@hasDecl(relation, "from")) relation.from else .fromTable(relativeTypeName(@typeName(relation))),
-        ChangeSetAfterDbCast(relation, ChangeSet),
-        &returning,
-    );
+    return sql.Insert(.{
+        .into = .table(relativeTypeName(@typeName(relation))),
+        .ChangeSet = ChangeSetAfterDbCast(relation, ChangeSet),
+        .Returning = OutputListFromRelation(relation),
+    });
 }
 
 fn typeCastedChangeSet(
@@ -314,7 +327,10 @@ fn typeCastedChangeSetToInsert(
 ) !InsertFromRelation(relation, @TypeOf(change_set)) {
     @setEvalBranchQuota(100000);
 
-    return .{ .change_set = try changeSetAfterDbCast(self, relation, change_set) };
+    return .{
+        .change_set = try changeSetAfterDbCast(self, relation, change_set),
+        .returning = outputListFromRelation(relation),
+    };
 }
 
 pub fn CastResult(comptime ValueAfterTypeCast: type) type {
@@ -492,19 +508,12 @@ pub fn update(
 fn UpdateFromRelation(comptime relation: type, comptime ChangeSet: type) type {
     @setEvalBranchQuota(100000);
 
-    const relation_fields = @typeInfo(relation.Attributes).@"struct".fields;
-    var returning_buf: [relation_fields.len]sql.Output = undefined;
-    for (relation_fields, 0..) |field, index| {
-        returning_buf[index] = .fromColumn(field.name);
-    }
-    const returning = returning_buf;
-
-    return sql.Update(
-        if (@hasDecl(relation, "from")) relation.from else .fromTable(relativeTypeName(@typeName(relation))),
-        ChangeSetAfterDbCast(relation, ChangeSet),
-        sql.Where("id = ?", struct { primaryKeyType(relation) }),
-        &returning,
-    );
+    return sql.Update(.{
+        .into = .table(relativeTypeName(@typeName(relation))),
+        .ChangeSet = ChangeSetAfterDbCast(relation, ChangeSet),
+        .Where = sql.where.FromParams(struct { id: primaryKeyType(relation) }),
+        .Returning = OutputListFromRelation(relation),
+    });
 }
 
 fn typeCastedChangeSetToUpdate(self: *const @This(), comptime relation: type, id: primaryKeyType(relation), change_set: anytype) !UpdateFromRelation(relation, @TypeOf(change_set)) {
@@ -512,7 +521,8 @@ fn typeCastedChangeSetToUpdate(self: *const @This(), comptime relation: type, id
 
     return .{
         .change_set = try changeSetAfterDbCast(self, relation, change_set),
-        .where = .{ .params = .{id} },
+        .where = .{ .expression = .{ .params = .{id} } },
+        .returning = outputListFromRelation(relation),
     };
 }
 

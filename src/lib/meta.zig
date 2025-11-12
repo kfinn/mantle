@@ -60,3 +60,55 @@ pub fn mergeTuples(lhs: anytype, rhs: anytype) MergedTuples(@TypeOf(lhs), @TypeO
 
     return result;
 }
+
+pub fn FlattenedTuples(comptime Tuples: type) type {
+    const flattened_fields_count = comptime flattened_fields_count: {
+        var count = 0;
+        for (@typeInfo(Tuples).@"struct".fields) |field| {
+            count += @typeInfo(field.type).@"struct".fields.len;
+        }
+        break :flattened_fields_count count;
+    };
+    const flattened_field_types = comptime flattened_field_types: {
+        var types_buf: [flattened_fields_count]type = undefined;
+        var next_index = 0;
+        for (@typeInfo(Tuples).@"struct".fields) |outer_field| {
+            for (@typeInfo(outer_field.type).@"struct".fields) |inner_field| {
+                types_buf[next_index] = inner_field.type;
+                next_index += 1;
+            }
+        }
+        const types = types_buf;
+        break :flattened_field_types &types;
+    };
+    return std.meta.Tuple(flattened_field_types);
+}
+
+fn flattenedTupleIndexFromFields(
+    comptime Tuples: type,
+    comptime outer_field: std.builtin.Type.StructField,
+    comptime inner_field: std.builtin.Type.StructField,
+) usize {
+    var index = 0;
+    for (@typeInfo(Tuples).@"struct".fields) |candidate_outer_field| {
+        for (@typeInfo(candidate_outer_field.type).@"struct".fields) |candidate_inner_field| {
+            if (std.mem.eql(u8, outer_field.name, candidate_outer_field.name) and std.mem.eql(u8, inner_field.name, candidate_inner_field.name)) {
+                return index;
+            }
+            index += 1;
+        }
+    }
+    return index;
+}
+
+pub fn flattenTuples(tuples: anytype) FlattenedTuples(@TypeOf(tuples)) {
+    const Tuples = @TypeOf(tuples);
+    var result: FlattenedTuples(Tuples) = undefined;
+    inline for (@typeInfo(Tuples).@"struct".fields) |outer_field| {
+        const tuple = @field(tuples, outer_field.name);
+        inline for (@typeInfo(outer_field.type).@"struct".fields) |inner_field| {
+            result[comptime flattenedTupleIndexFromFields(Tuples, outer_field, inner_field)] = @field(tuple, inner_field.name);
+        }
+    }
+    return result;
+}

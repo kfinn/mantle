@@ -99,7 +99,14 @@ pub fn Router(comptime App: type, comptime comptime_options: ComptimeOptions) ty
             }
 
             const empty_param_names: [0][:0]const u8 = .{};
-            if (self.handleRouteEntries(&empty_param_names, request, response, comptime_options.routes, request.url.path[1..], .{})) |handled| {
+            if (self.handleRouteEntries(
+                &empty_param_names,
+                request,
+                response,
+                comptime_options.routes,
+                request.url.path[1..],
+                .{},
+            )) |handled| {
                 if (handled) return;
             } else |err| {
                 std.log.err("error: {}", .{err});
@@ -125,21 +132,57 @@ pub fn Router(comptime App: type, comptime comptime_options: ComptimeOptions) ty
             response.body = "Not Found";
         }
 
-        fn handleRouteEntries(self: *@This(), comptime route_param_names: []const [:0]const u8, request: *httpz.Request, response: *httpz.Response, comptime routes: []const Route, path: []const u8, route_params: RouteParams(route_param_names)) !bool {
+        fn handleRouteEntries(
+            self: *@This(),
+            comptime route_param_names: []const [:0]const u8,
+            request: *httpz.Request,
+            response: *httpz.Response,
+            comptime routes: []const Route,
+            path: []const u8,
+            route_params: RouteParams(route_param_names),
+        ) !bool {
             inline for (routes) |route| {
-                const handled = switch (route) {
-                    .resource => |resource| try self.handleResource(route_param_names, request, response, resource, path, route_params),
-                    .resources => |resources| try self.handleResources(route_param_names, request, response, resources, path, route_params),
-                    .namespace => |namespace| try self.handleNamespace(route_param_names, request, response, namespace, path, route_params),
-                };
-                if (handled) {
+                if (switch (route) {
+                    .resource => |resource| try self.handleResource(
+                        route_param_names,
+                        request,
+                        response,
+                        resource,
+                        path,
+                        route_params,
+                    ),
+                    .resources => |resources| try self.handleResources(
+                        route_param_names,
+                        request,
+                        response,
+                        resources,
+                        path,
+                        route_params,
+                    ),
+                    .namespace => |namespace| try self.handleNamespace(
+                        route_param_names,
+                        request,
+                        response,
+                        namespace,
+                        path,
+                        route_params,
+                    ),
+                }) {
                     return true;
                 }
             }
             return false;
         }
 
-        fn handleResource(self: *@This(), comptime route_param_names: []const [:0]const u8, request: *httpz.Request, response: *httpz.Response, comptime resource: Resource, path: []const u8, route_params: RouteParams(route_param_names)) !bool {
+        fn handleResource(
+            self: *@This(),
+            comptime route_param_names: []const [:0]const u8,
+            request: *httpz.Request,
+            response: *httpz.Response,
+            comptime resource: Resource,
+            path: []const u8,
+            route_params: RouteParams(route_param_names),
+        ) !bool {
             const first_path_segment, const path_segments_after_name = splitFirstPathSegment(path);
 
             if (!std.mem.eql(u8, resource.name, first_path_segment)) {
@@ -163,27 +206,39 @@ pub fn Router(comptime App: type, comptime comptime_options: ComptimeOptions) ty
                             try self.performControllerAction(resource.Controller, "edit", request, response, route_params);
                             return true;
                         }
-                        return false;
                     },
                     .POST => {
                         if (std.mem.eql(u8, action_path_segment, "edit") and std.meta.hasFn(resource.Controller, "update")) {
                             try self.performControllerAction(resource.Controller, "update", request, response, route_params);
                             return true;
                         }
-                        return false;
                     },
                     else => {},
                 }
-                return false;
             }
 
             if (resource.routes) |child_routes| {
-                return try self.handleRouteEntries(request, response, child_routes, path_segments_after_name, route_params);
+                return try self.handleRouteEntries(
+                    route_param_names,
+                    request,
+                    response,
+                    child_routes,
+                    path_segments_after_name,
+                    route_params,
+                );
             }
             return false;
         }
 
-        fn handleResources(self: *@This(), comptime route_param_names: []const [:0]const u8, request: *httpz.Request, response: *httpz.Response, comptime resources: Resources, path: []const u8, route_params: RouteParams(route_param_names)) !bool {
+        fn handleResources(
+            self: *@This(),
+            comptime route_param_names: []const [:0]const u8,
+            request: *httpz.Request,
+            response: *httpz.Response,
+            comptime resources: Resources,
+            path: []const u8,
+            route_params: RouteParams(route_param_names),
+        ) !bool {
             const first_path_segment, const path_segments_after_name = splitFirstPathSegment(path);
 
             if (!std.mem.eql(u8, resources.name, first_path_segment)) {
@@ -231,7 +286,6 @@ pub fn Router(comptime App: type, comptime comptime_options: ComptimeOptions) ty
                     },
                     else => {},
                 }
-                return false;
             }
 
             const id_path_segment = action_or_id_path_segment;
@@ -255,19 +309,33 @@ pub fn Router(comptime App: type, comptime comptime_options: ComptimeOptions) ty
                     },
                     else => {},
                 }
-                return false;
             }
 
             if (resources.routes) |child_routes| {
                 const param_name = comptime std.fmt.comptimePrint("{s}_id", .{inflector.comptimeSingularize(resources.name)});
                 const nested_route_param_names = comptime comptimeExtendParamNames(route_param_names, param_name);
                 const route_params_with_id = extendRouteParams(route_params, param_name, action_or_id_path_segment);
-                return try self.handleRouteEntries(nested_route_param_names, request, response, child_routes, path_segments_after_action_or_id, route_params_with_id);
+                return try self.handleRouteEntries(
+                    nested_route_param_names,
+                    request,
+                    response,
+                    child_routes,
+                    path_segments_after_action_or_id,
+                    route_params_with_id,
+                );
             }
             return false;
         }
 
-        fn handleNamespace(self: *@This(), comptime route_param_names: []const [:0]const u8, request: *httpz.Request, response: *httpz.Response, comptime namespace: Namespace, path: []const u8, route_params: RouteParams(route_param_names)) !bool {
+        fn handleNamespace(
+            self: *@This(),
+            comptime route_param_names: []const [:0]const u8,
+            request: *httpz.Request,
+            response: *httpz.Response,
+            comptime namespace: Namespace,
+            path: []const u8,
+            route_params: RouteParams(route_param_names),
+        ) !bool {
             const first_path_segment, const rest_path_segments = splitFirstPathSegment(path);
 
             if (!std.mem.eql(u8, namespace.name, first_path_segment)) {
@@ -275,7 +343,14 @@ pub fn Router(comptime App: type, comptime comptime_options: ComptimeOptions) ty
             }
 
             if (namespace.routes) |child_routes| {
-                return try self.handleRouteEntries(request, response, child_routes, rest_path_segments, route_params);
+                return try self.handleRouteEntries(
+                    route_param_names,
+                    request,
+                    response,
+                    child_routes,
+                    rest_path_segments,
+                    route_params,
+                );
             }
             return false;
         }
@@ -284,7 +359,14 @@ pub fn Router(comptime App: type, comptime comptime_options: ComptimeOptions) ty
             return @alignCast(@fieldParentPtr("router", self));
         }
 
-        fn performControllerAction(self: *@This(), comptime Controller: type, comptime action_name: []const u8, request: *httpz.Request, response: *httpz.Response, params: anytype) !void {
+        fn performControllerAction(
+            self: *@This(),
+            comptime Controller: type,
+            comptime action_name: []const u8,
+            request: *httpz.Request,
+            response: *httpz.Response,
+            params: anytype,
+        ) !void {
             var context = try App.ControllerContext.init(
                 self.app(),
                 request,

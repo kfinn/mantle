@@ -1,8 +1,14 @@
 pub const escape = @import("sql/escape.zig");
+pub const from = @import("sql/from.zig");
+pub const From = from.From;
 pub const insert = @import("sql/insert.zig");
 pub const Insert = insert.Insert;
-pub const Into = @import("sql/Into.zig");
-pub const Output = @import("sql/Output.zig");
+pub const output = @import("sql/output.zig");
+pub const Output = output.Output;
+pub const output_list = @import("sql/output_list.zig");
+pub const OutputList = output_list.OutputList;
+pub const parameterized_snippet = @import("sql/parameterized_snippet.zig");
+pub const ParameterizedSnippet = parameterized_snippet.ParameterizedSnippet;
 pub const select = @import("sql/select.zig");
 pub const Select = select.Select;
 pub const update = @import("sql/update.zig");

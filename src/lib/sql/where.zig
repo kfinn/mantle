@@ -1,83 +1,23 @@
 const std = @import("std");
 
 const meta = @import("../meta.zig");
-const sql_escape = @import("escape.zig");
+const escape = @import("escape.zig");
+const parameterized_snippet = @import("parameterized_snippet.zig");
 
-pub fn Where(comptime expression_param: []const u8, comptime ParamsParam: type) type {
+pub fn Where(comptime Expression: type) type {
     return struct {
-        pub const expression = expression_param;
-        pub const Params = ParamsParam;
+        pub const Params = Expression.Params;
 
-        params: Params,
+        expression: Expression,
 
-        pub fn merge(self: *const @This(), rhs: anytype, comptime operator: []const u8) Merged(@This(), @TypeOf(rhs), operator) {
-            return .{ .params = meta.mergeTuples(self.params, rhs.params) };
+        pub fn params(self: *const @This()) Params {
+            return self.expression.params;
         }
 
         pub fn writeToSql(writer: *std.Io.Writer, next_placeholder: *usize) std.Io.Writer.Error!void {
-            const State = enum {
-                init,
-                literal_value,
-                literal_value_escape,
-                identifier,
-                question_mark,
-            };
-            var state: State = .init;
-            expression: for (expression) |c| {
-                switch (state) {
-                    .init => {
-                        if (c == '?') {
-                            state = .question_mark;
-                            continue :expression;
-                        }
-                        try writer.writeByte(c);
-                        if (c == '\'') {
-                            state = .literal_value;
-                        } else if (!std.ascii.isWhitespace(c)) {
-                            state = .identifier;
-                        }
-                    },
-                    .literal_value => {
-                        try writer.writeByte(c);
-                        if (c == '\'') {
-                            state = .init;
-                        } else if (c == '\\') {
-                            state = .literal_value_escape;
-                        }
-                    },
-                    .literal_value_escape => {
-                        try writer.writeByte(c);
-                        state = .literal_value;
-                    },
-                    .identifier => {
-                        try writer.writeByte(c);
-                        if (std.ascii.isWhitespace(c)) {
-                            state = .init;
-                        }
-                    },
-                    .question_mark => {
-                        if (std.ascii.isWhitespace(c)) {
-                            try writer.print("${d}{c}", .{ next_placeholder.*, c });
-                            next_placeholder.* += 1;
-                            state = .init;
-                        } else {
-                            try writer.print{ "?{c}", .{c} };
-                            state = .identifier;
-                        }
-                    },
-                }
-            }
-            if (state == .question_mark) {
-                try writer.print("${d}", .{next_placeholder.*});
-                next_placeholder.* += 1;
-            }
-            try writer.writeByte(' ');
+            try Expression.writeToSql(writer, next_placeholder);
         }
     };
-}
-
-pub fn fromExpression(comptime expression: []const u8, params: anytype) Where(expression, @TypeOf(params)) {
-    return .{ .params = params };
 }
 
 fn writeExpressionFromParams(writer: *std.Io.Writer, comptime Params: type) std.Io.Writer.Error!void {
@@ -86,7 +26,7 @@ fn writeExpressionFromParams(writer: *std.Io.Writer, comptime Params: type) std.
         if (requires_leading_and) {
             try writer.writeAll(" AND ");
         }
-        try sql_escape.writeEscapedIdentifier(writer, field.name);
+        try escape.writeEscapedIdentifier(writer, field.name);
         try writer.writeAll(" = ?");
         requires_leading_and = true;
     }
@@ -111,19 +51,12 @@ fn comptimeExpressionFromParams(comptime Params: type) *const [expressionFromPar
 }
 
 pub fn FromParams(comptime Params: type) type {
-    return Where(
+    return Where(parameterized_snippet.ParameterizedSnippet(
         comptimeExpressionFromParams(Params),
         meta.TupleFromStruct(Params),
-    );
+    ));
 }
 
 pub fn fromParams(params: anytype) FromParams(@TypeOf(params)) {
-    return .{ .params = meta.structToTuple(params) };
-}
-
-pub fn Merged(comptime Lhs: type, comptime Rhs: type, comptime operator: []const u8) type {
-    return Where(
-        "(" ++ Lhs.expression ++ ") " ++ operator ++ " (" ++ Rhs.expression ++ ")",
-        meta.MergedTuples(Lhs.Params, Rhs.Params),
-    );
+    return .{ .expression = .{ .params = meta.structToTuple(params) } };
 }
