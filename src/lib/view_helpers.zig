@@ -222,7 +222,7 @@ pub const CheckboxOptions = struct {
 };
 
 pub fn writeCheckbox(writer: *std.Io.Writer, name: []const u8, value: []const u8, options: CheckboxOptions) !void {
-    try writeHtmlTag(writer, "input", .{ .type = "checkbox", .name = name, .value = "1", .checked = std.mem.eql(u8, "1", value), .class = options.class orelse "" }, .{ .self_closing = true });
+    try writeHtmlTag(writer, "input", .{ .type = "checkbox", .name = name, .id = name, .value = "1", .checked = std.mem.eql(u8, "1", value), .class = options.class orelse "" }, .{ .self_closing = true });
     try writeHtmlTag(writer, "input", .{ .type = "hidden", .name = name, .value = "0", .class = options.class orelse "" }, .{ .self_closing = true });
 }
 
