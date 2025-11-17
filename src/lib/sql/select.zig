@@ -44,7 +44,7 @@ pub fn Select(
         has_offset: bool = false,
     },
 ) type {
-    @setEvalBranchQuota(10000);
+    @setEvalBranchQuota(100000);
 
     return struct {
         pub const OutputList = opts.OutputList orelse parameterized_snippet.Empty;
@@ -94,7 +94,7 @@ pub fn Select(
         }
 
         fn comptimeToSqlCount() usize {
-            @setEvalBranchQuota(10000);
+            @setEvalBranchQuota(100000);
 
             var discarding_writer: std.Io.Writer.Discarding = .init(&.{});
             writeToSql(&discarding_writer.writer) catch unreachable;
@@ -102,7 +102,7 @@ pub fn Select(
         }
 
         pub fn toSql() *const [comptimeToSqlCount():0]u8 {
-            @setEvalBranchQuota(10000);
+            @setEvalBranchQuota(100000);
 
             const sql: [comptimeToSqlCount():0]u8 = comptime sql: {
                 var buf: [comptimeToSqlCount():0]u8 = undefined;

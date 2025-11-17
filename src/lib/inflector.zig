@@ -155,7 +155,7 @@ fn delimitedCount(text: []const u8) usize {
 
 pub fn comptimeHumanize(comptime text: []const u8) *const [delimitedCount(text):0]u8 {
     comptime {
-        @setEvalBranchQuota(10000);
+        @setEvalBranchQuota(1000000);
         var buf: [delimitedCount(text):0]u8 = undefined;
         var buf_writer = std.Io.Writer.fixed(&buf);
         writeDelimited(&buf_writer, text, ' ') catch unreachable;

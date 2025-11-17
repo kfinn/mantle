@@ -47,11 +47,11 @@ pub const BeginFormOptions = struct {
     class: ?[]const u8 = null,
 };
 
-pub fn beginForm(writer: *std.Io.Writer, opts: BeginFormOptions) std.Io.Writer.Error!void {
+pub fn beginForm(writer: *std.Io.Writer, opts: BeginFormOptions) !void {
     try writeHtmlTag(writer, "form", opts, .{});
 }
 
-pub fn endForm(writer: *std.Io.Writer) std.Io.Writer.Error!void {
+pub fn endForm(writer: *std.Io.Writer) !void {
     try writer.writeAll("</form>");
 }
 
@@ -59,7 +59,7 @@ pub const ErrorsOptions = struct {
     class: ?[]const u8 = null,
 };
 
-pub fn writeFieldErrors(writer: *std.Io.Writer, errors: anytype, field: @TypeOf(errors).Field, options: ErrorsOptions) std.Io.Writer.Error!void {
+pub fn writeFieldErrors(writer: *std.Io.Writer, errors: anytype, field: @TypeOf(errors).Field, options: ErrorsOptions) !void {
     try writeErrors(writer, errors.field_errors.get(field).items, options);
 }
 
@@ -82,8 +82,14 @@ pub fn writeErrors(writer: *std.Io.Writer, errors: []validation.Error, options: 
 
 pub const FieldOptions = struct {
     label: LabelOptions = .{},
-    input: InputOptions = .{},
+    input: FieldInputOptions = .{ .input = .{} },
     errors: ErrorsOptions = .{},
+};
+
+pub const FieldInputOptions = union(enum) {
+    input: InputOptions,
+    select: SelectOptions,
+    checkbox: CheckboxOptions,
 };
 
 pub const LabelOptions = struct {
@@ -114,11 +120,36 @@ pub fn writeField(
     comptime name: []const u8,
     options: FieldOptions,
 ) !void {
+    switch (options.input) {
+        .checkbox => |checkbox_options| {
+            try writeHtmlTag(writer, "label", .{ .@"for" = name, .class = options.label.class }, .{});
+            try writeCheckbox(writer, name, value, checkbox_options);
+            try writer.writeAll("<span>");
+            try cgi_escape.writeEscapedHtml(writer, options.label.name orelse comptime inflector.comptimeHumanize(name));
+            try writer.writeAll("</span>");
+            try writer.writeAll("<div>");
+            try writeErrors(writer, errors, options.errors);
+            try writer.writeAll("</div>");
+            try writer.writeAll("</label>");
+            return;
+        },
+        else => {},
+    }
     try writeHtmlTag(writer, "label", .{ .@"for" = name, .class = options.label.class }, .{});
     try writer.writeAll("<span>");
     try cgi_escape.writeEscapedHtml(writer, options.label.name orelse comptime inflector.comptimeHumanize(name));
     try writer.writeAll("</span>");
-    try writeInput(writer, name, value, options.input);
+    switch (options.input) {
+        .input => |input_options| {
+            try writeInput(writer, name, value, input_options);
+        },
+        .select => |select_options| {
+            try writeSelect(writer, name, value, select_options);
+        },
+        .checkbox => {
+            unreachable;
+        },
+    }
     try writer.writeAll("<div>");
     try writeErrors(writer, errors, options.errors);
     try writer.writeAll("</div>");
@@ -132,7 +163,7 @@ pub const InputOptions = struct {
     autocomplete: ?[]const u8 = null,
 };
 
-pub fn writeInput(writer: *std.Io.Writer, name: []const u8, value: []const u8, options: InputOptions) std.Io.Writer.Error!void {
+pub fn writeInput(writer: *std.Io.Writer, name: []const u8, value: []const u8, options: InputOptions) !void {
     try writeHtmlTag(
         writer,
         "input",
@@ -145,8 +176,54 @@ pub fn writeInput(writer: *std.Io.Writer, name: []const u8, value: []const u8, o
             .class = options.class,
             .autocomplete = options.autocomplete,
         },
+        .{ .self_closing = true },
+    );
+}
+
+pub const SelectOptions = struct {
+    options: []const Option,
+    class: ?[]const u8 = null,
+
+    pub const Option = struct {
+        label: []const u8,
+        value: []const u8,
+    };
+};
+
+pub fn writeSelect(writer: *std.Io.Writer, name: []const u8, value: []const u8, options: SelectOptions) !void {
+    try writeHtmlTag(
+        writer,
+        "select",
+        .{
+            .class = options.class,
+            .name = name,
+            .id = name,
+        },
         .{},
     );
+    for (options.options) |option| {
+        try writeHtmlTag(
+            writer,
+            "option",
+            .{
+                .selected = std.mem.eql(u8, value, option.value),
+                .value = option.value,
+            },
+            .{},
+        );
+        try cgi_escape.writeEscapedHtml(writer, option.label);
+        try writer.writeAll("</option>");
+    }
+    try writer.writeAll("</select>");
+}
+
+pub const CheckboxOptions = struct {
+    class: ?[]const u8 = null,
+};
+
+pub fn writeCheckbox(writer: *std.Io.Writer, name: []const u8, value: []const u8, options: CheckboxOptions) !void {
+    try writeHtmlTag(writer, "input", .{ .type = "checkbox", .name = name, .value = "1", .checked = std.mem.eql(u8, "1", value), .class = options.class orelse "" }, .{ .self_closing = true });
+    try writeHtmlTag(writer, "input", .{ .type = "hidden", .name = name, .value = "0", .class = options.class orelse "" }, .{ .self_closing = true });
 }
 
 pub const SubmitOptions = struct {

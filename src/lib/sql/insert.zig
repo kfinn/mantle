@@ -30,7 +30,7 @@ pub fn Insert(comptime opts: struct {
     ChangeSet: type,
     Returning: ?type = null,
 }) type {
-    @setEvalBranchQuota(10000);
+    @setEvalBranchQuota(100000);
 
     return struct {
         pub const into = opts.into;
@@ -80,7 +80,7 @@ pub fn Insert(comptime opts: struct {
         }
 
         fn comptimeToSqlCount() usize {
-            @setEvalBranchQuota(10000);
+            @setEvalBranchQuota(100000);
 
             var discarding_writer = std.Io.Writer.Discarding.init(&.{});
             writeToSql(&discarding_writer.writer) catch unreachable;
@@ -88,7 +88,7 @@ pub fn Insert(comptime opts: struct {
         }
 
         pub fn toSql() *const [comptimeToSqlCount():0]u8 {
-            @setEvalBranchQuota(10000);
+            @setEvalBranchQuota(100000);
 
             const sql: [comptimeToSqlCount():0]u8 = comptime sql: {
                 var buf: [comptimeToSqlCount():0]u8 = undefined;

@@ -128,7 +128,7 @@ fn SelectFromRelation(
         has_offset: bool,
     },
 ) type {
-    @setEvalBranchQuota(100000);
+    @setEvalBranchQuota(1000000);
 
     return sql.Select(.{
         .OutputList = OutputListFromRelation(relation),
@@ -150,7 +150,7 @@ fn selectFromRelation(
         .has_offset = @hasField(@TypeOf(opts), "offset"),
     },
 ) {
-    @setEvalBranchQuota(100000);
+    @setEvalBranchQuota(1000000);
 
     return .{
         .output_list = outputListFromRelation(relation),
@@ -229,7 +229,7 @@ pub fn create(
 }
 
 fn ChangeSetAfterRelationAttributesCast(comptime relation: type, comptime ChangeSet: type) type {
-    @setEvalBranchQuota(100000);
+    @setEvalBranchQuota(1000000);
 
     const change_set_fields = @typeInfo(ChangeSet).@"struct".fields;
     const relation_fields = @typeInfo(relation.Attributes).@"struct".fields;
@@ -254,7 +254,7 @@ fn ChangeSetAfterRelationAttributesCast(comptime relation: type, comptime Change
 }
 
 fn InsertFromRelation(comptime relation: type, comptime ChangeSet: type) type {
-    @setEvalBranchQuota(100000);
+    @setEvalBranchQuota(1000000);
 
     return sql.Insert(.{
         .into = .table(relativeTypeName(@typeName(relation))),
@@ -269,7 +269,7 @@ fn typeCastedChangeSet(
     change_set_before_type_cast: anytype,
     errors: *validation.RecordErrors(@TypeOf(change_set_before_type_cast)),
 ) !?ChangeSetAfterRelationAttributesCast(relation, @TypeOf(change_set_before_type_cast)) {
-    @setEvalBranchQuota(100000);
+    @setEvalBranchQuota(1000000);
 
     const ChangeSet = @TypeOf(change_set_before_type_cast);
     const ConcreteChangeSetAfterRelationAttributesCast = ChangeSetAfterRelationAttributesCast(relation, ChangeSet);
@@ -325,7 +325,7 @@ fn typeCastedChangeSetToInsert(
     comptime relation: type,
     change_set: anytype,
 ) !InsertFromRelation(relation, @TypeOf(change_set)) {
-    @setEvalBranchQuota(100000);
+    @setEvalBranchQuota(1000000);
 
     return .{
         .change_set = try changeSetAfterDbCast(self, relation, change_set),
@@ -367,6 +367,18 @@ fn builtinCast(
                 return .{ .success = field_after_type_cast.defaultValue() orelse null };
             }
             switch (@typeInfo(optional.child)) {
+                .bool => {
+                    if (value_before_type_cast.len == 0) {
+                        return .{ .success = field_after_type_cast.defaultValue() orelse null };
+                    }
+                    if (std.mem.eql(u8, "0", value_before_type_cast)) {
+                        return .{ .success = false };
+                    } else if (std.mem.eql(u8, "1", value_before_type_cast)) {
+                        return .{ .success = true };
+                    } else {
+                        return .{ .failure = .init(error.InvalidFormat, "invalid boolean") };
+                    }
+                },
                 .int => {
                     if (value_before_type_cast.len == 0) {
                         return .{ .success = field_after_type_cast.defaultValue() orelse null };
@@ -387,9 +399,34 @@ fn builtinCast(
                         return .{ .failure = .init(err, "invalid number") };
                     }
                 },
+                .@"enum" => {
+                    if (value_before_type_cast.len == 0) {
+                        return .{ .success = field_after_type_cast.defaultValue() orelse null };
+                    }
+                    if (std.meta.stringToEnum(ValueAfterTypeCast, value_before_type_cast)) |value_after_type_cast| {
+                        return .{ .success = value_after_type_cast };
+                    } else {
+                        return .{ .failure = .init(error.InvalidFormat, "invalid enum") };
+                    }
+                },
                 else => {
                     @compileError("Cannot automatically cast type " ++ @typeName(ValueBeforeTypeCast) ++ " to " ++ @typeName(ValueAfterTypeCast));
                 },
+            }
+        },
+        .bool => {
+            if (value_before_type_cast.len == 0) {
+                if (field_after_type_cast.defaultValue()) |default_value| {
+                    return .{ .success = default_value };
+                }
+                return .{ .failure = .init(error.Required, "required") };
+            }
+            if (std.mem.eql(u8, "0", value_before_type_cast)) {
+                return .{ .success = false };
+            } else if (std.mem.eql(u8, "1", value_before_type_cast)) {
+                return .{ .success = true };
+            } else {
+                return .{ .failure = .init(error.InvalidFormat, "invalid boolean") };
             }
         },
         .int => {
@@ -419,6 +456,19 @@ fn builtinCast(
                 return .{ .failure = .init(err, "invalid number") };
             }
             return .{ .failure = .init(error.InvalidNumber, "invalid number") };
+        },
+        .@"enum" => {
+            if (value_before_type_cast.len == 0) {
+                if (field_after_type_cast.defaultValue()) |default_value| {
+                    return .{ .success = default_value };
+                }
+                return .{ .failure = .init(error.Required, "required") };
+            }
+            if (std.meta.stringToEnum(ValueAfterTypeCast, value_before_type_cast)) |value_after_type_cast| {
+                return .{ .success = value_after_type_cast };
+            } else {
+                return .{ .failure = .init(error.InvalidFormat, "invalid enum") };
+            }
         },
         else => {
             return .{ .success = value_before_type_cast };
@@ -506,7 +556,7 @@ pub fn update(
 }
 
 fn UpdateFromRelation(comptime relation: type, comptime ChangeSet: type) type {
-    @setEvalBranchQuota(100000);
+    @setEvalBranchQuota(1000000);
 
     return sql.Update(.{
         .into = .table(relativeTypeName(@typeName(relation))),
@@ -517,7 +567,7 @@ fn UpdateFromRelation(comptime relation: type, comptime ChangeSet: type) type {
 }
 
 fn typeCastedChangeSetToUpdate(self: *const @This(), comptime relation: type, id: primaryKeyType(relation), change_set: anytype) !UpdateFromRelation(relation, @TypeOf(change_set)) {
-    @setEvalBranchQuota(100000);
+    @setEvalBranchQuota(1000000);
 
     return .{
         .change_set = try changeSetAfterDbCast(self, relation, change_set),
@@ -527,7 +577,7 @@ fn typeCastedChangeSetToUpdate(self: *const @This(), comptime relation: type, id
 }
 
 fn ChangeSetAfterDbCast(relation: type, ChangeSet: type) type {
-    @setEvalBranchQuota(100000);
+    @setEvalBranchQuota(1000000);
     const to_db_casts = if (@hasDecl(relation, "to_db_casts")) relation.to_db_casts else struct {};
     const change_set_fields = std.meta.fields(ChangeSet);
     var fields: [change_set_fields.len]std.builtin.Type.StructField = undefined;

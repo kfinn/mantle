@@ -20,7 +20,6 @@ pub const Table = struct {
         if (self.alias) |alias| {
             try writer.print(" {s}", .{alias});
         }
-        try writer.writeByte(' ');
     }
 };
 
@@ -30,7 +29,7 @@ pub fn Update(comptime opts: struct {
     Where: ?type = null,
     Returning: ?type = null,
 }) type {
-    @setEvalBranchQuota(10000);
+    @setEvalBranchQuota(100000);
 
     return struct {
         pub const into = opts.into;
@@ -51,7 +50,7 @@ pub fn Update(comptime opts: struct {
             var next_placeholder: usize = 1;
             try writer.writeAll("UPDATE ");
             try into.writeToSql(writer);
-            try writer.writeAll("SET ");
+            try writer.writeAll(" SET ");
             const change_set_fields = @typeInfo(ChangeSet).@"struct".fields;
             {
                 var requires_comma = false;
@@ -69,13 +68,13 @@ pub fn Update(comptime opts: struct {
                 try Where.writeToSql(writer, &next_placeholder);
             }
             if (Returning != parameterized_snippet.Empty) {
-                try writer.writeAll("RETURNING ");
+                try writer.writeAll(" RETURNING ");
                 try Returning.writeToSql(writer, &next_placeholder);
             }
         }
 
         fn comptimeToSqlCount() usize {
-            @setEvalBranchQuota(10000);
+            @setEvalBranchQuota(100000);
 
             var discarding_writer = std.Io.Writer.Discarding.init(&.{});
             writeToSql(&discarding_writer.writer) catch unreachable;
@@ -83,7 +82,7 @@ pub fn Update(comptime opts: struct {
         }
 
         pub fn toSql() *const [comptimeToSqlCount():0]u8 {
-            @setEvalBranchQuota(10000);
+            @setEvalBranchQuota(100000);
 
             const sql: [comptimeToSqlCount():0]u8 = comptime sql: {
                 var buf: [comptimeToSqlCount():0]u8 = undefined;
