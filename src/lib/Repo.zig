@@ -2,12 +2,27 @@ const std = @import("std");
 
 const pg = @import("pg");
 
+const Association = @import("Association.zig");
 const inflector = @import("inflector.zig");
 const sql = @import("sql.zig");
 const validation = @import("validation.zig");
 
+const DbTransaction = union(enum) {
+    transaction: void,
+    savepoint: struct {
+        index: usize,
+        name: []const u8,
+    },
+};
+
+const Transaction = struct {
+    node: std.SinglyLinkedList.Node = .{},
+    db_transaction: DbTransaction,
+};
+
 allocator: std.mem.Allocator,
 conn: *pg.Conn,
+transactions: std.SinglyLinkedList = .{},
 
 pub fn init(allocator: std.mem.Allocator, conn: *pg.Conn) @This() {
     return .{ .allocator = allocator, .conn = conn };
@@ -31,21 +46,69 @@ fn primaryKeyType(relation: type) type {
     unreachable;
 }
 
+pub const Preload = struct {
+    name: []const u8,
+    preloads: []const @This() = &[_]@This(){},
+};
+
+const ResultOptions = struct {
+    preloads: []const Preload = &[_]Preload{},
+};
+
+fn findRelationAssociationByName(comptime relation: type, name: []const u8) Association {
+    for (relation.associations) |association| {
+        if (std.mem.eql(u8, association.name, name)) {
+            return association;
+        }
+    }
+    @compileError("unable to find association " ++ name ++ " from " ++ @typeName(relation));
+}
+
+fn Associations(comptime relation: type, comptime preloads: []const Preload) type {
+    const associations_fields = comptime associations_fields: {
+        var buf: [preloads.len]std.builtin.Type.StructField = undefined;
+        for (preloads, 0..) |preload, index| {
+            const association = findRelationAssociationByName(relation, preload.name);
+            const SingularAssociaitonRelationResult = *relationResultTypeWithOpts(association.relation, .{ .preloads = preload.preloads });
+
+            var name_with_sentinel: [preload.name.len:0]u8 = undefined;
+            @memcpy(name_with_sentinel[0..preload.name.len], preload.name);
+            name_with_sentinel[name_with_sentinel.len] = 0;
+            buf[index] = .{
+                .name = &name_with_sentinel,
+                .type = switch (association.type) {
+                    .has_many => []SingularAssociaitonRelationResult,
+                    .belongs_to => SingularAssociaitonRelationResult,
+                },
+                .default_value_ptr = null,
+                .is_comptime = false,
+                .alignment = 1,
+            };
+        }
+        const final = buf;
+        break :associations_fields &final;
+    };
+    return @Type(.{ .@"struct" = .{
+        .layout = .auto,
+        .fields = associations_fields,
+        .decls = &[_]std.builtin.Type.Declaration{},
+        .is_tuple = false,
+    } });
+}
+
 pub fn relationResultType(comptime relation: type) type {
     return struct {
         attributes: relation.Attributes,
-        helpers: if (@hasDecl(relation, "helpers")) relation.helpers(@This(), "helpers") else struct {},
+        helpers: if (@hasDecl(relation, "helpers")) relation.helpers(@This(), "helpers") else struct {} = .{},
     };
 }
 
-fn relativeTypeName(type_name: [:0]const u8) [:0]const u8 {
-    var last_dot_index = 0;
-    for (type_name, 0..) |c, index| {
-        if (c == '.') {
-            last_dot_index = index;
-        }
-    }
-    return type_name[last_dot_index + 1 ..];
+fn relationResultTypeWithOpts(comptime relation: type, comptime opts: ResultOptions) type {
+    return struct {
+        attributes: relation.Attributes,
+        associations: Associations(relation, opts.preloads),
+        helpers: if (@hasDecl(relation, "helpers")) relation.helpers(@This(), "helpers") else struct {} = .{},
+    };
 }
 
 pub fn find(self: *const @This(), comptime relation: type, id: primaryKeyType(relation)) !relationResultType(relation) {
@@ -66,26 +129,33 @@ pub fn findBy(self: *const @This(), comptime relation: type, params: anytype) !?
         .{ .allocator = self.allocator },
     );
     if (opt_row) |*row| {
-        const result = try self.rowToRelationResult(relation, row);
+        const result: relationResultType(relation) = .{ .attributes = try self.rowToAttributes(relation, row) };
         try row.deinit();
         return result;
     }
     return null;
 }
 
-pub fn all(self: *const @This(), comptime relation: type, opts: anytype) ![]relationResultType(relation) {
+pub fn all(
+    self: *const @This(),
+    comptime relation: type,
+    opts: anytype,
+    comptime result_opts: ResultOptions,
+) ![]relationResultTypeWithOpts(relation, result_opts) {
     const select = selectFromRelation(relation, opts);
-    if (self.conn.queryOpts(
+    const results = if (self.conn.queryOpts(
         @TypeOf(select).toSql(),
         select.params(),
         .{ .allocator = self.allocator },
-    )) |query_result| {
-        defer query_result.deinit();
-        var array_list: std.ArrayList(relationResultType(relation)) = .{};
+    )) |query_result| results_without_associations: {
+        var array_list: std.ArrayList(relationResultTypeWithOpts(relation, result_opts)) = .{};
         while (try query_result.next()) |row| {
-            try array_list.append(self.allocator, try self.rowToRelationResult(relation, &row));
+            try array_list.append(self.allocator, undefined);
+            array_list.items[array_list.items.len - 1].attributes = try rowToAttributes(self, relation, row);
         }
-        return try array_list.toOwnedSlice(self.allocator);
+        query_result.deinit();
+
+        break :results_without_associations try array_list.toOwnedSlice(self.allocator);
     } else |err| {
         switch (err) {
             error.PG => {
@@ -96,6 +166,32 @@ pub fn all(self: *const @This(), comptime relation: type, opts: anytype) ![]rela
             else => {},
         }
         return err;
+    };
+
+    try populatePreloads(self, result_opts.preloads, relation, results);
+
+    return results;
+}
+
+fn populatePreloads(
+    self: *const @This(),
+    comptime preloads: []const Preload,
+    comptime relation: type,
+    records: []relationResultTypeWithOpts(relation, .{ .preloads = preloads }),
+) !void {
+    inline for (preloads) |preload| {
+        const association = comptime findRelationAssociationByName(relation, preload.name);
+        const association_records = try self.all(
+            association.relation,
+            .{ .where = try association.preloadedFromRelationWhere(relation, records, self) },
+            .{ .preloads = preload.preloads },
+        );
+        try association.populate(
+            relation,
+            records,
+            association_records,
+            self,
+        );
     }
 }
 
@@ -132,7 +228,7 @@ fn SelectFromRelation(
 
     return sql.Select(.{
         .OutputList = OutputListFromRelation(relation),
-        .From = sql.from.Table(relativeTypeName(@typeName(relation))),
+        .From = sql.from.Table(inflector.relationNameFromType(relation)),
         .Where = opts.Where,
         .has_limit = opts.has_limit,
         .has_offset = opts.has_offset,
@@ -161,7 +257,7 @@ fn selectFromRelation(
     };
 }
 
-fn CreateResult(comptime relation: type, comptime ChangeSet: type) type {
+pub fn CreateResult(comptime relation: type, comptime ChangeSet: type) type {
     return union(enum) {
         success: relationResultType(relation),
         failure: validation.RecordErrors(ChangeSet),
@@ -212,7 +308,7 @@ pub fn create(
     )) |opt_row| {
         if (opt_row == null) return error.UnknownInsertError;
         var row = opt_row.?;
-        const result = try self.rowToRelationResult(relation, &row);
+        const result: relationResultType(relation) = .{ .attributes = try self.rowToAttributes(relation, &row) };
         row.deinit() catch {};
         return .{ .success = result };
     } else |err| {
@@ -257,7 +353,7 @@ fn InsertFromRelation(comptime relation: type, comptime ChangeSet: type) type {
     @setEvalBranchQuota(1000000);
 
     return sql.Insert(.{
-        .into = .table(relativeTypeName(@typeName(relation))),
+        .into = .table(inflector.relationNameFromType(relation)),
         .ChangeSet = ChangeSetAfterDbCast(relation, ChangeSet),
         .Returning = OutputListFromRelation(relation),
     });
@@ -539,7 +635,7 @@ pub fn update(
     )) |opt_row| {
         if (opt_row == null) return error.UnknownInsertError;
         var row = opt_row.?;
-        const result = try self.rowToRelationResult(relation, &row);
+        const result: relationResultType(relation) = .{ .attributes = try self.rowToAttributes(relation, &row) };
         row.deinit() catch {};
         return .{ .success = result };
     } else |err| {
@@ -559,7 +655,7 @@ fn UpdateFromRelation(comptime relation: type, comptime ChangeSet: type) type {
     @setEvalBranchQuota(1000000);
 
     return sql.Update(.{
-        .into = .table(relativeTypeName(@typeName(relation))),
+        .into = .table(inflector.relationNameFromType(relation)),
         .ChangeSet = ChangeSetAfterDbCast(relation, ChangeSet),
         .Where = sql.where.FromParams(struct { id: primaryKeyType(relation) }),
         .Returning = OutputListFromRelation(relation),
@@ -721,30 +817,30 @@ fn RelationAttributesBeforeDbCast(relation: type) type {
     } });
 }
 
-fn rowToRelationResult(self: *const @This(), comptime relation: type, row: anytype) !relationResultType(relation) {
-    var result: relationResultType(relation) = undefined;
+fn rowToAttributes(self: *const @This(), comptime relation: type, row: anytype) !relation.Attributes {
+    var attributes: relation.Attributes = undefined;
     const AttributesBeforeDbCast = RelationAttributesBeforeDbCast(relation);
     const attributes_before_db_cast = try row.to(AttributesBeforeDbCast, .{ .dupe = true, .allocator = self.allocator });
     const from_db_casts = if (@hasDecl(relation, "from_db_casts")) relation.from_db_casts else struct {};
-    field: inline for (std.meta.fields(@TypeOf(result.attributes))) |field| {
+    field: inline for (std.meta.fields(@TypeOf(attributes))) |field| {
         if (std.meta.hasFn(from_db_casts, field.name)) {
-            @field(result.attributes, field.name) = try @field(from_db_casts, field.name)(@field(attributes_before_db_cast, field.name), self);
+            @field(attributes, field.name) = try @field(from_db_casts, field.name)(@field(attributes_before_db_cast, field.name), self);
             continue :field;
         }
 
         switch (@typeInfo(field.type)) {
             .@"struct" => {
                 if (std.meta.hasFn(field.type, "castFromDb")) {
-                    @field(result.attributes, field.name) = try field.type.castFromDb(@field(attributes_before_db_cast, field.name), self);
+                    @field(attributes, field.name) = try field.type.castFromDb(@field(attributes_before_db_cast, field.name), self);
                     continue :field;
                 }
             },
             .optional => |optional| {
                 if (std.meta.hasFn(optional.child, "castFromDb")) {
                     if (@field(attributes_before_db_cast, field.name)) |present_attribute| {
-                        @field(result.attributes, field.name) = try optional.child.castFromDb(present_attribute, self);
+                        @field(attributes, field.name) = try optional.child.castFromDb(present_attribute, self);
                     } else {
-                        @field(result.attributes, field.name) = null;
+                        @field(attributes, field.name) = null;
                     }
                     continue :field;
                 }
@@ -752,7 +848,86 @@ fn rowToRelationResult(self: *const @This(), comptime relation: type, row: anyty
             else => {},
         }
 
-        @field(result.attributes, field.name) = @field(attributes_before_db_cast, field.name);
+        @field(attributes, field.name) = @field(attributes_before_db_cast, field.name);
     }
-    return result;
+    return attributes;
+}
+
+pub fn beginTransaction(self: *@This()) !*const Transaction {
+    if (self.transactions.first) |node| {
+        const current_transaction: *Transaction = @alignCast(@fieldParentPtr("node", node));
+        switch (current_transaction.db_transaction) {
+            .transaction => {
+                return try self.beginSavepointTransaction(1);
+            },
+            .savepoint => |savepoint| {
+                return try self.beginSavepointTransaction(savepoint.index + 1);
+            },
+        }
+    } else {
+        try self.conn.begin();
+        return try self.pushTransaction(.transaction);
+    }
+}
+
+fn beginSavepointTransaction(self: *@This(), new_savepoint_index: usize) !*const Transaction {
+    const new_savepoint_name = try std.fmt.allocPrint(self.allocator, "repo_{*}_{d}", .{ self, new_savepoint_index + 1 });
+    const savepoint_statement = try std.fmt.allocPrint(self.allocator, "SAVEPOINT {s}", .{new_savepoint_name});
+    defer self.allocator.free(savepoint_statement);
+
+    _ = try self.conn.execOpts(savepoint_statement, .{}, .{ .allocator = self.allocator });
+
+    return try self.pushTransaction(.{ .savepoint = .{ .index = new_savepoint_index, .name = new_savepoint_name } });
+}
+
+fn pushTransaction(self: *@This(), db_transaction: DbTransaction) !*const Transaction {
+    const new_transaction = try self.allocator.create(Transaction);
+    new_transaction.db_transaction = db_transaction;
+    self.transactions.prepend(&new_transaction.node);
+    return new_transaction;
+}
+
+pub fn commitTransaction(self: *@This(), transaction: *const Transaction) !void {
+    switch (transaction.db_transaction) {
+        .savepoint => |savepoint| {
+            const release_savepoint_statement = try std.fmt.allocPrint(self.allocator, "RELEASE SAVEPOINT {s}", .{savepoint.name});
+            defer self.allocator.free(release_savepoint_statement);
+            _ = try self.conn.execOpts(release_savepoint_statement, .{}, .{ .allocator = self.allocator });
+        },
+        .transaction => {
+            _ = try self.conn.commit();
+        },
+    }
+    self.deinitCompletedTransactions(transaction);
+}
+
+pub fn rollbackTransaction(self: *@This(), transaction: *const Transaction) !void {
+    switch (transaction.db_transaction) {
+        .savepoint => |savepoint| {
+            const rollback_to_savepoint_statement = try std.fmt.allocPrint(self.allocator, "ROLLBACK TO SAVEPOINT {s}", .{savepoint.name});
+            defer self.allocator.free(rollback_to_savepoint_statement);
+            _ = try self.conn.execOpts(rollback_to_savepoint_statement, .{}, .{ .allocator = self.allocator });
+        },
+        .transaction => {
+            _ = try self.conn.rollback();
+        },
+    }
+    self.deinitCompletedTransactions(transaction);
+}
+
+fn deinitCompletedTransactions(self: *@This(), completed_transaction: *const Transaction) void {
+    while (self.transactions.popFirst()) |node| {
+        const transaction: *const Transaction = @alignCast(@fieldParentPtr("node", node));
+        switch (transaction.db_transaction) {
+            .savepoint => |savepoint| {
+                self.allocator.free(savepoint.name);
+            },
+            else => {},
+        }
+        self.allocator.destroy(transaction);
+        if (transaction == completed_transaction) {
+            return;
+        }
+    }
+    unreachable;
 }

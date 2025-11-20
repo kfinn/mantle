@@ -174,3 +174,8 @@ test comptimeHumanize {
     try std.testing.expectEqualStrings("favorite uri", comptime comptimeHumanize("FavoriteURI"));
     try std.testing.expectEqualStrings("favorite uri", comptime comptimeHumanize("Favorite___URI"));
 }
+
+pub fn relationNameFromType(comptime relation: type) []const u8 {
+    var iterator = std.mem.splitBackwardsScalar(u8, @typeName(relation), '.');
+    return iterator.first();
+}

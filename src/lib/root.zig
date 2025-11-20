@@ -1,4 +1,5 @@
 pub const App = @import("App.zig").App;
+pub const Association = @import("Association.zig");
 pub const cgi_escape = @import("cgi_escape.zig");
 pub const cli = @import("cli.zig");
 pub const ControllerContext = @import("ControllerContext.zig").ControllerContext;
