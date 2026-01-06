@@ -342,17 +342,14 @@ pub fn Router(comptime App: type, comptime comptime_options: ComptimeOptions) ty
                 return false;
             }
 
-            if (namespace.routes) |child_routes| {
-                return try self.handleRouteEntries(
-                    route_param_names,
-                    request,
-                    response,
-                    child_routes,
-                    rest_path_segments,
-                    route_params,
-                );
-            }
-            return false;
+            return try self.handleRouteEntries(
+                route_param_names,
+                request,
+                response,
+                namespace.routes,
+                rest_path_segments,
+                route_params,
+            );
         }
 
         fn app(self: *@This()) *App {
@@ -428,11 +425,25 @@ pub const Route = union(enum) {
     namespace: Namespace,
     resource: Resource,
     resources: Resources,
+
+    const RouteThis = @This();
+
+    pub fn initNamespace(name: []const u8, routes: []const RouteThis) @This() {
+        return .{ .namespace = .{ .name = name, .routes = routes } };
+    }
+
+    pub fn initResources(name: []const u8, Controller: type, opts: struct { routes: ?[]const RouteThis = null }) @This() {
+        return .{ .resources = .{ .name = name, .Controller = Controller, .routes = opts.routes } };
+    }
+
+    pub fn initResource(name: []const u8, Controller: type, opts: struct { routes: ?[]const RouteThis = null }) @This() {
+        return .{ .resource = .{ .name = name, .Controller = Controller, .routes = opts.routes } };
+    }
 };
 
 pub const Namespace = struct {
     name: []const u8,
-    routes: ?[]const Route,
+    routes: []const Route,
 };
 
 pub const Resources = struct {

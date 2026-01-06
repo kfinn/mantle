@@ -4,11 +4,10 @@ const httpz = @import("httpz");
 const pg = @import("pg");
 
 const controller_context = @import("ControllerContext.zig");
-const router_module = @import("Router.zig");
-const Router = router_module.Router;
+const routing = @import("routing.zig");
 
 pub const ComptimeOptions = struct {
-    router: router_module.ComptimeOptions,
+    router: routing.ComptimeOptions,
     Session: type = struct {},
     migrations: []const type = &[_]type{},
     tasks: []const type = &[_]type{},
@@ -42,7 +41,7 @@ pub fn App(comptime comptime_options: ComptimeOptions) type {
         pg_pool: *pg.Pool,
 
         const AppSelf = @This();
-        pub const AppRouter = Router(AppSelf, comptime_options.router);
+        pub const AppRouter = routing.Router(AppSelf, comptime_options.router);
         pub const ControllerContext = controller_context.ControllerContext(AppSelf);
         pub const Session = comptime_options.Session;
         pub const migrations = sorted_migrations;
