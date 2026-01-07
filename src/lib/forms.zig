@@ -115,3 +115,28 @@ pub fn formDataProtectedFromForgery(context: anytype, T: type) !?T {
     context.response.body = "Something went wrong";
     return null;
 }
+
+pub fn jsonDataProtectedFromForgery(context: anytype, T: type) !?T {
+    const action = context.request.url.path;
+    const method = @tagName(context.request.method);
+    if (try context.request.jsonValue()) |json_value| {
+        if (json_value == .object) {
+            if (json_value.object.get("_csrf_token")) |json_value_csrf_token| {
+                if (json_value_csrf_token == .string) {
+                    if (context.session.csrf_token.isValidFormScoped(action, method, json_value_csrf_token.string)) {
+                        return try std.json.parseFromValueLeaky(
+                            T,
+                            context.request.arena,
+                            json_value,
+                            .{ .ignore_unknown_fields = true },
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    context.response.status = 403;
+    context.response.body = "Something went wrong";
+    return null;
+}
