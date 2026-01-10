@@ -19,6 +19,7 @@ pub const Config = struct {
     session: struct {
         cookie_secret_key: *const [32]u8,
     },
+    httpz: httpz.Config,
 };
 
 fn migrationLessThanFn(_: void, lhs: type, rhs: type) bool {

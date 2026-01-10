@@ -35,10 +35,9 @@ pub fn ControllerContext(comptime App: type) type {
             };
         }
 
-        // TODO: add support for __Host- prefix.
-        const session_cookie_name = std.fmt.comptimePrint("{s}-session", .{App.Session.key});
-        const session_nonce_cookie_name = std.fmt.comptimePrint("{s}-session-nonce", .{App.Session.key});
-        const session_tag_cookie_name = std.fmt.comptimePrint("{s}-session-tag", .{App.Session.key});
+        const session_cookie_name = std.fmt.comptimePrint("__Host-{s}-session", .{App.Session.key});
+        const session_nonce_cookie_name = std.fmt.comptimePrint("__Host-{s}-session-nonce", .{App.Session.key});
+        const session_tag_cookie_name = std.fmt.comptimePrint("__Host-{s}-session-tag", .{App.Session.key});
 
         fn parseSession(app: *App, request: *httpz.Request) !App.Session {
             const base64_encrypted_session_zon = request.cookies().get(session_cookie_name) orelse {
@@ -129,18 +128,12 @@ pub fn ControllerContext(comptime App: type) type {
             const base64_nonce_buf = try self.response.arena.alloc(u8, base64_encoder.calcSize(nonce.len));
             const base64_nonce = base64_encoder.encode(base64_nonce_buf, &nonce);
 
-            // const host = self.request.header("host").?;
-            // var domain_split_iterator = std.mem.splitScalar(u8, host, ':');
-            // const domain = domain_split_iterator.first();
-
             const cookie_opts: httpz.response.CookieOpts = .{
                 .max_age = 604800, // one week
                 .path = "/",
-                // TODO: add more security
-                // .domain = domain,
-                // .secure = true,
-                // .http_only = true,
-                // .same_site = .strict,
+                .secure = true,
+                .http_only = true,
+                .same_site = .lax,
             };
 
             try self.response.setCookie(session_cookie_name, base64_encrypted_session_zon, cookie_opts);

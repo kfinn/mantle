@@ -7,16 +7,14 @@ pub fn Cli(comptime AppArgument: type) type {
     return struct {
         allocator: std.mem.Allocator,
         app: *App,
-        httpz_config: httpz.Config,
 
         const CliSelf = @This();
         pub const App = AppArgument;
 
-        pub fn init(allocator: std.mem.Allocator, app: *App, httpz_config: httpz.Config) CliSelf {
+        pub fn init(allocator: std.mem.Allocator, app: *App) CliSelf {
             return .{
                 .allocator = allocator,
                 .app = app,
-                .httpz_config = httpz_config,
             };
         }
 
@@ -49,12 +47,12 @@ pub fn Cli(comptime AppArgument: type) type {
 
                 var httpz_server = try httpz.Server(*App.AppRouter).init(
                     cli.allocator,
-                    cli.httpz_config,
+                    cli.app.config.httpz,
                     &cli.app.router,
                 );
                 defer httpz_server.deinit();
 
-                std.log.info("Listening at http://localhost:{d}", .{cli.httpz_config.port.?});
+                std.log.info("Listening at http://localhost:{d}", .{cli.app.config.httpz.port.?});
                 try httpz_server.listen();
             }
 
@@ -239,11 +237,10 @@ pub fn Cli(comptime AppArgument: type) type {
     };
 }
 
-pub fn main(allocator: std.mem.Allocator, app: anytype, httpz_config: httpz.Config) !void {
+pub fn main(allocator: std.mem.Allocator, app: anytype) !void {
     var cli = Cli(@TypeOf(app.*)).init(
         allocator,
         app,
-        httpz_config,
     );
     try cli.run();
 
@@ -251,7 +248,6 @@ pub fn main(allocator: std.mem.Allocator, app: anytype, httpz_config: httpz.Conf
 }
 
 const db_migrate_advisory_lock_key = db_migrate_advisory_lock_key: {
-    // TODO: think through whether this seed matters for security reasons
     var hasher: std.hash.XxHash32 = .init(7);
     hasher.update("db:migrate");
     break :db_migrate_advisory_lock_key hasher.final();
