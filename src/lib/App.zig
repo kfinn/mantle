@@ -14,14 +14,6 @@ pub const ComptimeOptions = struct {
     controller_helpers: type = struct {},
 };
 
-pub const Config = struct {
-    db: pg.Pool.Opts,
-    session: struct {
-        cookie_secret_key: *const [32]u8,
-    },
-    httpz: httpz.Config,
-};
-
 fn migrationLessThanFn(_: void, lhs: type, rhs: type) bool {
     return lhs.version < rhs.version;
 }
@@ -60,5 +52,14 @@ pub fn App(comptime comptime_options: ComptimeOptions) type {
             self.pg_pool.deinit();
             self.* = undefined;
         }
+
+        pub const Config = struct {
+            db_url: ?[]const u8 = null,
+            db: pg.Pool.Opts = .{},
+            session: struct {
+                cookie_secret_key: *const [32]u8,
+            },
+            httpz: httpz.Config,
+        };
     };
 }
