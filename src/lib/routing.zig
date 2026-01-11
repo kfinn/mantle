@@ -95,6 +95,7 @@ pub fn Router(comptime App: type, comptime comptime_options: ComptimeOptions) ty
                         renderServerError(response);
                         return;
                     };
+                    return;
                 }
             }
 
