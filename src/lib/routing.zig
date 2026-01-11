@@ -394,7 +394,8 @@ pub fn Router(comptime App: type, comptime comptime_options: ComptimeOptions) ty
             inline for (comptime_options.assets) |assets_library| {
                 if (assets_library.All.has(request.url.path)) {
                     const self_exe_dir_path = try std.fs.selfExeDirPathAlloc(response.arena);
-                    const asset_path = try std.fmt.allocPrint(response.arena, "{s}/../{s}", .{ self_exe_dir_path, request.url.path });
+                    const asset_path = try std.fmt.allocPrint(response.arena, "{s}/..{s}", .{ self_exe_dir_path, request.url.path });
+                    std.log.info("rendering asset at path {s}", .{asset_path});
 
                     response.content_type = httpz.ContentType.forFile(asset_path);
                     response.header("Cache-Control", "max-age=31536000, immutable");
