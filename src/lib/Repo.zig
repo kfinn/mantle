@@ -51,7 +51,7 @@ pub const Preload = struct {
     preloads: []const @This() = &[_]@This(){},
 };
 
-const ResultOptions = struct {
+pub const ResultOptions = struct {
     preloads: []const Preload = &[_]Preload{},
 };
 
@@ -96,42 +96,34 @@ fn Associations(comptime relation: type, comptime preloads: []const Preload) typ
     } });
 }
 
-pub fn relationResultType(comptime relation: type) type {
+pub fn relationResultTypeWithOpts(comptime relation_param: type, comptime opts: ResultOptions) type {
     return struct {
-        attributes: relation.Attributes,
-        helpers: if (@hasDecl(relation, "helpers")) relation.helpers(@This(), "helpers") else struct {} = .{},
-    };
-}
+        pub const relation = relation_param;
+        pub const result_opts = opts;
 
-fn relationResultTypeWithOpts(comptime relation: type, comptime opts: ResultOptions) type {
-    return struct {
         attributes: relation.Attributes,
         associations: Associations(relation, opts.preloads),
         helpers: if (@hasDecl(relation, "helpers")) relation.helpers(@This(), "helpers") else struct {} = .{},
     };
 }
 
-pub fn find(self: *const @This(), comptime relation: type, id: primaryKeyType(relation)) !relationResultType(relation) {
-    return try findBy(self, relation, .{ .id = id }) orelse error.NotFound;
+pub fn find(self: *const @This(), comptime relation: type, id: primaryKeyType(relation), comptime result_opts: ResultOptions) !relationResultTypeWithOpts(relation, result_opts) {
+    return try findBy(self, relation, .{ .id = id }, result_opts) orelse error.NotFound;
 }
 
-pub fn findBy(self: *const @This(), comptime relation: type, params: anytype) !?relationResultType(relation) {
-    const select = selectFromRelation(
+pub fn findBy(
+    self: *const @This(),
+    comptime relation: type,
+    params: anytype,
+    comptime result_opts: ResultOptions,
+) !?relationResultTypeWithOpts(relation, result_opts) {
+    const result_array = try self.all(
         relation,
-        .{
-            .where = sql.where.fromParams(params),
-            .limit = 1,
-        },
+        .{ .where = sql.where.fromParams(params), .limit = 1 },
+        result_opts,
     );
-    var opt_row = try self.conn.rowOpts(
-        @TypeOf(select).toSql(),
-        select.params(),
-        .{ .allocator = self.allocator },
-    );
-    if (opt_row) |*row| {
-        const result: relationResultType(relation) = .{ .attributes = try self.rowToAttributes(relation, row) };
-        try row.deinit();
-        return result;
+    if (result_array.len > 0) {
+        return result_array[0];
     }
     return null;
 }
@@ -142,10 +134,10 @@ pub fn all(
     opts: anytype,
     comptime result_opts: ResultOptions,
 ) ![]relationResultTypeWithOpts(relation, result_opts) {
-    const select = selectFromRelation(relation, opts);
+    const sql_select = selectFromRelation(relation, opts);
     const results = if (self.conn.queryOpts(
-        @TypeOf(select).toSql(),
-        select.params(),
+        sql.comptimeToSql(@TypeOf(sql_select)),
+        sql_select.params(),
         .{ .allocator = self.allocator },
     )) |query_result| results_without_associations: {
         var array_list: std.ArrayList(relationResultTypeWithOpts(relation, result_opts)) = .{};
@@ -157,20 +149,24 @@ pub fn all(
 
         break :results_without_associations try array_list.toOwnedSlice(self.allocator);
     } else |err| {
-        switch (err) {
-            error.PG => {
-                if (self.conn.err) |pg_err| {
-                    std.log.err("PG {s}\n", .{pg_err.message});
-                }
-            },
-            else => {},
-        }
+        self.handlePgError(err);
         return err;
     };
 
     try populatePreloads(self, result_opts.preloads, relation, results);
 
     return results;
+}
+
+fn handlePgError(self: *const @This(), err: anyerror) void {
+    switch (err) {
+        error.PG => {
+            if (self.conn.err) |pg_err| {
+                std.log.err("PG {s}\n", .{pg_err.message});
+            }
+        },
+        else => {},
+    }
 }
 
 fn populatePreloads(
@@ -257,9 +253,9 @@ fn selectFromRelation(
     };
 }
 
-pub fn CreateResult(comptime relation: type, comptime ChangeSet: type) type {
+pub fn CreateResult(comptime relation: type, comptime ChangeSet: type, comptime result_opts: ResultOptions) type {
     return union(enum) {
-        success: relationResultType(relation),
+        success: relationResultTypeWithOpts(relation, result_opts),
         failure: validation.RecordErrors(ChangeSet),
     };
 }
@@ -268,7 +264,8 @@ pub fn create(
     self: *const @This(),
     comptime relation: type,
     change_set: anytype,
-) !CreateResult(relation, @TypeOf(change_set)) {
+    comptime result_opts: ResultOptions,
+) !CreateResult(relation, @TypeOf(change_set), result_opts) {
     var errors: validation.RecordErrors(@TypeOf(change_set)) = .init(self.allocator);
     const change_set_after_type_cast = try self.typeCastedChangeSet(relation, change_set, &errors) orelse return .{ .failure = errors };
 
@@ -302,23 +299,19 @@ pub fn create(
     );
 
     if (self.conn.rowOpts(
-        @TypeOf(sql_insert).toSql(),
+        sql.comptimeToSql(@TypeOf(sql_insert)),
         sql_insert.params(),
         .{ .allocator = self.allocator },
     )) |opt_row| {
         if (opt_row == null) return error.UnknownInsertError;
         var row = opt_row.?;
-        const result: relationResultType(relation) = .{ .attributes = try self.rowToAttributes(relation, &row) };
+        var result_array: [1]relationResultTypeWithOpts(relation, result_opts) = undefined;
+        result_array[0].attributes = try self.rowToAttributes(relation, &row);
         row.deinit() catch {};
-        return .{ .success = result };
+        try self.populatePreloads(result_opts.preloads, relation, &result_array);
+        return .{ .success = result_array[0] };
     } else |err| {
-        if (err == error.PG) {
-            if (self.conn.err) |pg_err| {
-                try errors.addBaseError(.init(err, pg_err.message));
-                return .{ .failure = errors };
-            }
-        }
-
+        self.handlePgError(err);
         try errors.addBaseError(.init(err, "unknown error"));
         return .{ .failure = errors };
     }
@@ -572,11 +565,11 @@ fn builtinCast(
     }
 }
 
-fn UpdateResult(comptime ChangeSet: type, comptime relation: type) type {
+pub fn UpdateResult(comptime RecordType: type, comptime ChangeSet: type) type {
     return union(enum) {
-        success: relationResultType(relation),
+        success: RecordType,
         failure: struct {
-            record: relationResultType(relation),
+            record: RecordType,
             errors: validation.RecordErrors(ChangeSet),
         },
     };
@@ -584,15 +577,18 @@ fn UpdateResult(comptime ChangeSet: type, comptime relation: type) type {
 
 pub fn update(
     self: *const @This(),
-    comptime relation: type,
-    record: relationResultType(relation),
+    record: anytype,
     change_set: anytype,
-) !UpdateResult(@TypeOf(change_set), relation) {
+) !UpdateResult(@TypeOf(record), @TypeOf(change_set)) {
+    const relation = @TypeOf(record).relation;
+    const result_opts = @TypeOf(record).result_opts;
+
     const ChangeSet = @TypeOf(change_set);
     var errors: validation.RecordErrors(ChangeSet) = .init(self.allocator);
     const change_set_after_type_cast = try self.typeCastedChangeSet(relation, change_set, &errors) orelse return .{ .failure = .{ .record = record, .errors = errors } };
 
-    var updated_record: relationResultType(relation) = undefined;
+    var updated_record: relationResultTypeWithOpts(relation, result_opts) = undefined;
+    updated_record.associations = record.associations;
     inline for (@typeInfo(@TypeOf(record.attributes)).@"struct".fields) |field| {
         @field(updated_record.attributes, field.name) = if (@hasField(@TypeOf(change_set_after_type_cast), field.name)) @field(change_set_after_type_cast, field.name) else @field(record.attributes, field.name);
     }
@@ -629,23 +625,19 @@ pub fn update(
     );
 
     if (self.conn.rowOpts(
-        @TypeOf(sql_update).toSql(),
+        sql.comptimeToSql(@TypeOf(sql_update)),
         sql_update.params(),
         .{ .allocator = self.allocator },
     )) |opt_row| {
         if (opt_row == null) return error.UnknownInsertError;
         var row = opt_row.?;
-        const result: relationResultType(relation) = .{ .attributes = try self.rowToAttributes(relation, &row) };
+        var result_array: [1]relationResultTypeWithOpts(relation, result_opts) = undefined;
+        result_array[0].attributes = try self.rowToAttributes(relation, &row);
         row.deinit() catch {};
-        return .{ .success = result };
+        try self.populatePreloads(result_opts.preloads, relation, &result_array);
+        return .{ .success = result_array[0] };
     } else |err| {
-        if (err == error.PG) {
-            if (self.conn.err) |pg_err| {
-                try errors.addBaseError(.init(err, pg_err.message));
-                return .{ .failure = .{ .errors = errors, .record = updated_record } };
-            }
-        }
-
+        self.handlePgError(err);
         try errors.addBaseError(.init(err, "unknown error"));
         return .{ .failure = .{ .errors = errors, .record = updated_record } };
     }
@@ -816,6 +808,51 @@ fn RelationAttributesBeforeDbCast(relation: type) type {
         .layout = .auto,
     } });
 }
+
+pub fn deleteAll(self: *const @This(), comptime relation: type, opts: anytype) !DeleteAllResult {
+    const sql_delete = deleteFromRelation(relation, opts);
+    if (self.conn.execOpts(
+        sql.comptimeToSql(@TypeOf(sql_delete)),
+        sql_delete.params(),
+        .{ .allocator = self.allocator },
+    )) |maybe_deleted_count| {
+        return .{ .success = maybe_deleted_count.? };
+    } else |err| {
+        self.handlePgError(err);
+        return .failure;
+    }
+}
+
+fn DeleteFromRelation(comptime relation: type, comptime opts: struct { Where: ?type }) type {
+    @setEvalBranchQuota(1000000);
+
+    return sql.Delete(.{
+        .From = sql.from.Table(inflector.relationNameFromType(relation)),
+        .Where = opts.Where,
+    });
+}
+
+fn deleteFromRelation(
+    comptime relation: type,
+    opts: anytype,
+) DeleteFromRelation(
+    relation,
+    .{
+        .Where = if (@hasField(@TypeOf(opts), "where")) @TypeOf(opts.where) else null,
+    },
+) {
+    @setEvalBranchQuota(1000000);
+
+    return .{
+        .from = .{ .expression = .{ .params = .{} } },
+        .where = if (@hasField(@TypeOf(opts), "where")) opts.where else .{},
+    };
+}
+
+pub const DeleteAllResult = union(enum) {
+    success: i64,
+    failure: void,
+};
 
 fn rowToAttributes(self: *const @This(), comptime relation: type, row: anytype) !relation.Attributes {
     var attributes: relation.Attributes = undefined;

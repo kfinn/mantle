@@ -14,3 +14,4 @@ pub const sql = @import("sql.zig");
 pub const url_form_encoded = @import("url_form_encoded.zig");
 pub const validation = @import("validation.zig");
 pub const view_helpers = @import("view_helpers.zig");
+pub const UuidArray = @import("UuidArray.zig");

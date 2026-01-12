@@ -1,3 +1,7 @@
+const comptime_to_sql = @import("sql/comptime_to_sql.zig");
+pub const comptimeToSql = comptime_to_sql.comptimeToSql;
+pub const delete = @import("sql/delete.zig");
+pub const Delete = delete.Delete;
 pub const escape = @import("sql/escape.zig");
 pub const from = @import("sql/from.zig");
 pub const From = from.From;

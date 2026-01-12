@@ -44,8 +44,7 @@ pub fn Insert(comptime opts: struct {
         change_set: ChangeSet,
         returning: Returning,
 
-        fn writeToSql(writer: *std.Io.Writer) std.Io.Writer.Error!void {
-            var next_placeholder: usize = 1;
+        pub fn writeToSql(writer: *std.Io.Writer, next_placeholder: *usize) std.Io.Writer.Error!void {
             try writer.writeAll("INSERT INTO");
             try into.writeToSql(writer);
             try writer.writeAll(" (");
@@ -68,36 +67,15 @@ pub fn Insert(comptime opts: struct {
                     if (requires_comma) {
                         try writer.writeAll(", ");
                     }
-                    try parameterized_snippet.writeToSqlWithPlaceholders(writer, "?", &next_placeholder);
+                    try parameterized_snippet.writeToSqlWithPlaceholders(writer, "?", next_placeholder);
                     requires_comma = true;
                 }
             }
             try writer.writeByte(')');
             if (Returning != parameterized_snippet.Empty) {
                 try writer.writeAll(" RETURNING ");
-                try Returning.writeToSql(writer, &next_placeholder);
+                try Returning.writeToSql(writer, next_placeholder);
             }
-        }
-
-        fn comptimeToSqlCount() usize {
-            @setEvalBranchQuota(100000);
-
-            var discarding_writer = std.Io.Writer.Discarding.init(&.{});
-            writeToSql(&discarding_writer.writer) catch unreachable;
-            return discarding_writer.fullCount();
-        }
-
-        pub fn toSql() *const [comptimeToSqlCount():0]u8 {
-            @setEvalBranchQuota(100000);
-
-            const sql: [comptimeToSqlCount():0]u8 = comptime sql: {
-                var buf: [comptimeToSqlCount():0]u8 = undefined;
-                var fixed_buffer_writer = std.Io.Writer.fixed(&buf);
-                writeToSql(&fixed_buffer_writer) catch unreachable;
-                buf[buf.len] = 0;
-                break :sql buf;
-            };
-            return &sql;
         }
 
         pub fn params(self: *const @This()) Params {

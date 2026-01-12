@@ -46,8 +46,7 @@ pub fn Update(comptime opts: struct {
         where: Where,
         returning: Returning,
 
-        fn writeToSql(writer: *std.Io.Writer) std.Io.Writer.Error!void {
-            var next_placeholder: usize = 1;
+        pub fn writeToSql(writer: *std.Io.Writer, next_placeholder: *usize) std.Io.Writer.Error!void {
             try writer.writeAll("UPDATE ");
             try into.writeToSql(writer);
             try writer.writeAll(" SET ");
@@ -59,39 +58,18 @@ pub fn Update(comptime opts: struct {
                         try writer.writeAll(", ");
                     }
                     try escape.writeEscapedIdentifier(writer, field.name);
-                    try parameterized_snippet.writeToSqlWithPlaceholders(writer, " = ?", &next_placeholder);
+                    try parameterized_snippet.writeToSqlWithPlaceholders(writer, " = ?", next_placeholder);
                     requires_comma = true;
                 }
             }
             if (Where != parameterized_snippet.Empty) {
                 try writer.writeAll(" WHERE ");
-                try Where.writeToSql(writer, &next_placeholder);
+                try Where.writeToSql(writer, next_placeholder);
             }
             if (Returning != parameterized_snippet.Empty) {
                 try writer.writeAll(" RETURNING ");
-                try Returning.writeToSql(writer, &next_placeholder);
+                try Returning.writeToSql(writer, next_placeholder);
             }
-        }
-
-        fn comptimeToSqlCount() usize {
-            @setEvalBranchQuota(100000);
-
-            var discarding_writer = std.Io.Writer.Discarding.init(&.{});
-            writeToSql(&discarding_writer.writer) catch unreachable;
-            return discarding_writer.fullCount();
-        }
-
-        pub fn toSql() *const [comptimeToSqlCount():0]u8 {
-            @setEvalBranchQuota(100000);
-
-            const sql: [comptimeToSqlCount():0]u8 = comptime sql: {
-                var buf: [comptimeToSqlCount():0]u8 = undefined;
-                var fixed_buffer_writer = std.Io.Writer.fixed(&buf);
-                writeToSql(&fixed_buffer_writer) catch unreachable;
-                buf[buf.len] = 0;
-                break :sql buf;
-            };
-            return &sql;
         }
 
         pub fn params(self: *const @This()) Params {

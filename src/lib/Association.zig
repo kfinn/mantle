@@ -5,6 +5,7 @@ const pg = @import("pg");
 const inflector = @import("inflector.zig");
 const Repo = @import("Repo.zig");
 const sql = @import("sql.zig");
+const UuidArray = @import("UuidArray.zig");
 
 relation: type,
 name: []const u8,
@@ -45,28 +46,6 @@ fn PreloadedFromRelationWhere(comptime self: @This(), comptime relation: type) t
         },
     }
 }
-
-const UuidArray = struct {
-    uuids: []const []const u8,
-
-    pub fn castToDb(self: *const @This(), repo: *const Repo) !pg.Binary {
-        const buffer = try repo.allocator.alloc(u8, 20 + 20 * self.uuids.len);
-        var writer: std.Io.Writer = .fixed(buffer);
-
-        writer.writeInt(i32, 1, .big) catch unreachable; // dimensions
-        writer.writeInt(i32, 0, .big) catch unreachable; // bitmask of null
-        writer.writeInt(i32, 2950, .big) catch unreachable; // oid for UUID
-        writer.writeInt(i32, @intCast(self.uuids.len), .big) catch unreachable; // number of UUIDs
-        writer.writeInt(i32, 1, .big) catch unreachable; // lower bound of this dimension
-
-        for (self.uuids) |uuid| {
-            writer.writeInt(i32, 16, .big) catch unreachable;
-            writer.writeAll(uuid) catch unreachable;
-        }
-
-        return .{ .data = buffer };
-    }
-};
 
 pub fn preloadedFromRelationWhere(comptime self: @This(), comptime relation: type, relation_records: anytype, repo: *const Repo) !PreloadedFromRelationWhere(self, relation) {
     switch (self.type) {

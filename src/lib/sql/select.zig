@@ -66,52 +66,30 @@ pub fn Select(
         limit: Limit,
         offset: Offset,
 
-        fn writeToSql(writer: *std.Io.Writer) std.Io.Writer.Error!void {
-            var next_placeholder: usize = 1;
+        pub fn writeToSql(writer: *std.Io.Writer, next_placeholder: *usize) std.Io.Writer.Error!void {
             try writer.writeAll("SELECT");
             if (OutputList == parameterized_snippet.Empty) {
                 try writer.writeAll(" *");
             } else {
-                try OutputList.writeToSql(writer, &next_placeholder);
+                try OutputList.writeToSql(writer, next_placeholder);
             }
 
             std.debug.assert(From != parameterized_snippet.Empty);
             try writer.writeAll(" FROM ");
-            try From.writeToSql(writer, &next_placeholder);
+            try From.writeToSql(writer, next_placeholder);
 
             if (Where != parameterized_snippet.Empty) {
                 try writer.writeAll(" WHERE ");
-                try Where.writeToSql(writer, &next_placeholder);
+                try Where.writeToSql(writer, next_placeholder);
             }
             if (Limit != parameterized_snippet.Empty) {
                 try writer.writeByte(' ');
-                try Limit.writeToSql(writer, &next_placeholder);
+                try Limit.writeToSql(writer, next_placeholder);
             }
             if (Offset != parameterized_snippet.Empty) {
                 try writer.writeByte(' ');
-                try Offset.writeToSql(writer, &next_placeholder);
+                try Offset.writeToSql(writer, next_placeholder);
             }
-        }
-
-        fn comptimeToSqlCount() usize {
-            @setEvalBranchQuota(100000);
-
-            var discarding_writer: std.Io.Writer.Discarding = .init(&.{});
-            writeToSql(&discarding_writer.writer) catch unreachable;
-            return discarding_writer.fullCount();
-        }
-
-        pub fn toSql() *const [comptimeToSqlCount():0]u8 {
-            @setEvalBranchQuota(100000);
-
-            const sql: [comptimeToSqlCount():0]u8 = comptime sql: {
-                var buf: [comptimeToSqlCount():0]u8 = undefined;
-                var writer = std.Io.Writer.fixed(&buf);
-                writeToSql(&writer) catch unreachable;
-                buf[buf.len] = 0;
-                break :sql buf;
-            };
-            return &sql;
         }
 
         pub fn params(self: *const @This()) Params {
