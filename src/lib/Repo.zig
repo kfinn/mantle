@@ -48,7 +48,16 @@ fn primaryKeyType(relation: type) type {
 
 pub const Preload = struct {
     name: []const u8,
-    preloads: []const @This() = &[_]@This(){},
+    preloads: []const PreloadThis = &[_]PreloadThis{},
+
+    const PreloadThis = @This();
+
+    pub fn init(
+        name: []const u8,
+        opts: struct { preloads: []const PreloadThis = &[_]PreloadThis{} },
+    ) PreloadThis {
+        return .{ .name = name, .preloads = opts.preloads };
+    }
 };
 
 pub const ResultOptions = struct {
