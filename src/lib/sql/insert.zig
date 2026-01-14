@@ -50,6 +50,7 @@ pub fn Insert(comptime opts: struct {
             try writer.writeAll(" (");
 
             const change_set_fields = @typeInfo(ChangeSet).@"struct".fields;
+            if (change_set_fields.len == 0) @compileError("Cannot create SQL INSERT, " ++ @typeName(ChangeSet) ++ " has no fields");
             {
                 var requires_comma = false;
                 for (change_set_fields) |field| {

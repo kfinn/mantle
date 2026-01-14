@@ -112,7 +112,7 @@ pub fn relationResultTypeWithOpts(comptime relation_param: type, comptime opts: 
 
         attributes: relation.Attributes,
         associations: Associations(relation, opts.preloads),
-        helpers: if (@hasDecl(relation, "helpers")) relation.helpers(@This(), "helpers") else struct {} = .{},
+        helpers: if (@hasDecl(relation, "Helpers")) relation.Helpers(@This(), "helpers") else struct {} = .{},
     };
 }
 
@@ -175,6 +175,9 @@ fn handlePgError(self: *const @This(), err: anyerror) void {
             }
         },
         else => {},
+    }
+    if (@errorReturnTrace()) |error_return_trace| {
+        std.debug.dumpStackTrace(error_return_trace.*);
     }
 }
 
@@ -275,7 +278,14 @@ pub fn create(
     change_set: anytype,
     comptime result_opts: ResultOptions,
 ) !CreateResult(relation, @TypeOf(change_set), result_opts) {
-    var errors: validation.RecordErrors(@TypeOf(change_set)) = .init(self.allocator);
+    const ChangeSet = @TypeOf(change_set);
+
+    var errors: validation.RecordErrors(ChangeSet) = .init(self.allocator);
+    if (std.meta.hasMethod(ChangeSet, "validate")) {
+        try change_set.validate(&errors);
+        if (errors.isInvalid()) return .{ .failure = errors };
+    }
+
     const change_set_after_type_cast = try self.typeCastedChangeSet(relation, change_set, &errors) orelse return .{ .failure = errors };
 
     if (std.meta.hasFn(relation, "validate")) {
@@ -333,12 +343,19 @@ fn ChangeSetAfterRelationAttributesCast(comptime relation: type, comptime Change
     const relation_fields = @typeInfo(relation.Attributes).@"struct".fields;
     var fields: [relation_fields.len]std.builtin.Type.StructField = undefined;
     var next_field_index = 0;
-    field: for (change_set_fields) |change_set_field| {
-        for (relation_fields) |relation_field| {
+    relation_field: for (relation_fields) |relation_field| {
+        for (change_set_fields) |change_set_field| {
             if (std.mem.eql(u8, relation_field.name, change_set_field.name)) {
                 fields[next_field_index] = relation_field;
                 next_field_index += 1;
-                continue :field;
+                continue :relation_field;
+            }
+        }
+        if (@hasDecl(ChangeSet, "casts")) {
+            if (@hasDecl(ChangeSet.casts, relation_field.name)) {
+                fields[next_field_index] = relation_field;
+                next_field_index += 1;
+                continue :relation_field;
             }
         }
     }
@@ -589,11 +606,15 @@ pub fn update(
     record: anytype,
     change_set: anytype,
 ) !UpdateResult(@TypeOf(record), @TypeOf(change_set)) {
-    const relation = @TypeOf(record).relation;
-    const result_opts = @TypeOf(record).result_opts;
-
     const ChangeSet = @TypeOf(change_set);
     var errors: validation.RecordErrors(ChangeSet) = .init(self.allocator);
+    if (std.meta.hasMethod(ChangeSet, "validate")) {
+        try change_set.validate(record, &errors);
+        if (errors.isInvalid()) return .{ .failure = .{ .record = record, .errors = errors } };
+    }
+
+    const relation = @TypeOf(record).relation;
+    const result_opts = @TypeOf(record).result_opts;
     const change_set_after_type_cast = try self.typeCastedChangeSet(relation, change_set, &errors) orelse return .{ .failure = .{ .record = record, .errors = errors } };
 
     var updated_record: relationResultTypeWithOpts(relation, result_opts) = undefined;

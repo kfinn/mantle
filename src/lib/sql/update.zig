@@ -51,6 +51,7 @@ pub fn Update(comptime opts: struct {
             try into.writeToSql(writer);
             try writer.writeAll(" SET ");
             const change_set_fields = @typeInfo(ChangeSet).@"struct".fields;
+            if (change_set_fields.len == 0) @compileError("Cannot create SQL UPDATE, " ++ @typeName(ChangeSet) ++ " has no updated fields");
             {
                 var requires_comma = false;
                 for (change_set_fields) |field| {

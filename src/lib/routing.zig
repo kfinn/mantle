@@ -207,8 +207,16 @@ pub fn Router(comptime App: type, comptime comptime_options: ComptimeOptions) ty
                             try self.performControllerAction(resource.Controller, "edit", request, response, route_params);
                             return true;
                         }
+                        if (std.mem.eql(u8, action_path_segment, "new") and std.meta.hasFn(resource.Controller, "new")) {
+                            try self.performControllerAction(resource.Controller, "new", request, response, route_params);
+                            return true;
+                        }
                     },
                     .POST => {
+                        if (std.mem.eql(u8, action_path_segment, "new") and std.meta.hasFn(resource.Controller, "create")) {
+                            try self.performControllerAction(resource.Controller, "create", request, response, route_params);
+                            return true;
+                        }
                         if (std.mem.eql(u8, action_path_segment, "edit") and std.meta.hasFn(resource.Controller, "update")) {
                             try self.performControllerAction(resource.Controller, "update", request, response, route_params);
                             return true;
