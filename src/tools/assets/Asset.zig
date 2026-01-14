@@ -217,6 +217,7 @@ fn installTransformed(
             std.debug.assert(std.mem.eql(u8, try reader.peek(options.asset_end_token.len), options.asset_end_token));
             reader.toss(options.asset_end_token.len);
             if (digested_asset_paths_by_asset_path.get(url)) |digested_asset_path| {
+                try writer.writeAll("/assets/");
                 try writer.writeAll(digested_asset_path);
             } else {
                 try writer.writeAll(url);
