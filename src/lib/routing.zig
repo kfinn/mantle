@@ -24,7 +24,7 @@ fn RouteParams(comptime param_names: []const [:0]const u8) type {
                 .type = []const u8,
                 .default_value_ptr = null,
                 .is_comptime = false,
-                .alignment = 1,
+                .alignment = @alignOf([]const u8),
             };
         }
         const decls = [_]std.builtin.Type.Declaration{};

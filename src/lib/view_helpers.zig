@@ -82,12 +82,89 @@ pub fn writeErrors(writer: *std.Io.Writer, errors: []validation.Error, options: 
 
 pub const FieldOptions = struct {
     label: LabelOptions = .{},
-    input: FieldInputOptions = .{ .input = .{} },
+    input: FieldInputOptions = .{ .text = .{} },
     errors: ErrorsOptions = .{},
 };
 
+fn htmlAttributeField(name: [:0]const u8) std.builtin.Type.StructField {
+    const null_default_value = comptime null;
+    return .{
+        .name = name,
+        .type = ?[]const u8,
+        .default_value_ptr = &null_default_value,
+        .is_comptime = false,
+        .alignment = @alignOf([]const u8),
+    };
+}
+
+pub const HiddenInputOptions = struct {
+    comptime type: []const u8 = "hidden",
+    id: ?[]const u8 = null,
+    name: ?[]const u8 = null,
+    value: ?[]const u8 = null,
+    autofocus: ?bool = null,
+    class: ?[]const u8 = null,
+    autocomplete: ?[]const u8 = null,
+};
+
+pub const TextInputOptions = struct {
+    comptime type: []const u8 = "text",
+    id: ?[]const u8 = null,
+    name: ?[]const u8 = null,
+    value: ?[]const u8 = null,
+    autofocus: ?bool = false,
+    class: ?[]const u8 = null,
+    autocomplete: ?[]const u8 = null,
+};
+
+pub const EmailInputOptions = struct {
+    comptime type: []const u8 = "email",
+    id: ?[]const u8 = null,
+    name: ?[]const u8 = null,
+    value: ?[]const u8 = null,
+    autofocus: ?bool = false,
+    class: ?[]const u8 = null,
+    autocomplete: ?[]const u8 = null,
+};
+
+pub const PasswordInputOptions = struct {
+    comptime type: []const u8 = "password",
+    id: ?[]const u8 = null,
+    name: ?[]const u8 = null,
+    value: ?[]const u8 = null,
+    autofocus: ?bool = false,
+    class: ?[]const u8 = null,
+    autocomplete: ?[]const u8 = null,
+};
+
+pub const NumberInputOptions = struct {
+    comptime type: []const u8 = "number",
+    id: ?[]const u8 = null,
+    name: ?[]const u8 = null,
+    value: ?[]const u8 = null,
+    autofocus: ?bool = false,
+    class: ?[]const u8 = null,
+    autocomplete: ?[]const u8 = null,
+    min: ?[]const u8 = null,
+    max: ?[]const u8 = null,
+};
+
+pub const TimeInputOptions = struct {
+    comptime type: []const u8 = "time",
+    id: ?[]const u8 = null,
+    name: ?[]const u8 = null,
+    value: ?[]const u8 = null,
+    autofocus: ?bool = false,
+    class: ?[]const u8 = null,
+    autocomplete: ?[]const u8 = null,
+};
+
 pub const FieldInputOptions = union(enum) {
-    input: InputOptions,
+    text: TextInputOptions,
+    email: EmailInputOptions,
+    password: PasswordInputOptions,
+    number: NumberInputOptions,
+    time: TimeInputOptions,
     select: SelectOptions,
     checkbox: CheckboxOptions,
 };
@@ -113,6 +190,12 @@ pub fn writeRecordField(
     );
 }
 
+fn applyInputDefaults(options: anytype, name: []const u8, value: []const u8) void {
+    if (options.id == null) options.id = name;
+    if (options.name == null) options.name = name;
+    if (options.value == null) options.value = value;
+}
+
 pub fn writeField(
     writer: *std.Io.Writer,
     value: []const u8,
@@ -120,34 +203,45 @@ pub fn writeField(
     comptime name: []const u8,
     options: FieldOptions,
 ) !void {
-    switch (options.input) {
-        .checkbox => |checkbox_options| {
-            try writeHtmlTag(writer, "label", .{ .@"for" = name, .class = options.label.class }, .{});
-            try writeCheckbox(writer, name, value, checkbox_options);
-            try writer.writeAll("<span>");
-            try cgi_escape.writeEscapedHtml(writer, options.label.name orelse comptime inflector.comptimeHumanize(name));
-            try writer.writeAll("</span>");
-            try writer.writeAll("<div>");
-            try writeErrors(writer, errors, options.errors);
-            try writer.writeAll("</div>");
-            try writer.writeAll("</label>");
-            return;
-        },
-        else => {},
+    if (options.input == .checkbox) {
+        const checkbox_options = options.input.checkbox;
+        try writeHtmlTag(writer, "label", .{ .@"for" = name, .class = options.label.class }, .{});
+        try writeCheckbox(writer, name, value, checkbox_options);
+        try writer.writeAll("<span>");
+        try cgi_escape.writeEscapedHtml(writer, options.label.name orelse comptime inflector.comptimeHumanize(name));
+        try writer.writeAll("</span>");
+        try writer.writeAll("<div>");
+        try writeErrors(writer, errors, options.errors);
+        try writer.writeAll("</div>");
+        try writer.writeAll("</label>");
+        return;
     }
+
     try writeHtmlTag(writer, "label", .{ .@"for" = name, .class = options.label.class }, .{});
     try writer.writeAll("<span>");
     try cgi_escape.writeEscapedHtml(writer, options.label.name orelse comptime inflector.comptimeHumanize(name));
     try writer.writeAll("</span>");
     switch (options.input) {
-        .input => |input_options| {
-            try writeInput(writer, name, value, input_options);
-        },
         .select => |select_options| {
             try writeSelect(writer, name, value, select_options);
         },
         .checkbox => {
             unreachable;
+        },
+        .text => |text_options| {
+            try writeInput(writer, name, value, text_options);
+        },
+        .email => |email_options| {
+            try writeInput(writer, name, value, email_options);
+        },
+        .password => |password_options| {
+            try writeInput(writer, name, value, password_options);
+        },
+        .number => |number_options| {
+            try writeInput(writer, name, value, number_options);
+        },
+        .time => |time_options| {
+            try writeInput(writer, name, value, time_options);
         },
     }
     try writer.writeAll("<div>");
@@ -156,28 +250,12 @@ pub fn writeField(
     try writer.writeAll("</label>");
 }
 
-pub const InputOptions = struct {
-    autofocus: ?bool = null,
-    type: ?[]const u8 = null,
-    class: ?[]const u8 = null,
-    autocomplete: ?[]const u8 = null,
-};
-
-pub fn writeInput(writer: *std.Io.Writer, name: []const u8, value: []const u8, options: InputOptions) !void {
-    try writeHtmlTag(
-        writer,
-        "input",
-        .{
-            .name = name,
-            .id = name,
-            .value = value,
-            .autofocus = options.autofocus,
-            .type = options.type,
-            .class = options.class,
-            .autocomplete = options.autocomplete,
-        },
-        .{ .self_closing = true },
-    );
+pub fn writeInput(writer: *std.Io.Writer, name: []const u8, value: []const u8, options: anytype) !void {
+    var options_with_defaults = options;
+    if (options_with_defaults.id == null) options_with_defaults.id = name;
+    if (options_with_defaults.name == null) options_with_defaults.name = name;
+    if (options_with_defaults.value == null) options_with_defaults.value = value;
+    try writeHtmlTag(writer, "input", options_with_defaults, .{ .self_closing = true });
 }
 
 pub const SelectOptions = struct {
@@ -222,8 +300,30 @@ pub const CheckboxOptions = struct {
 };
 
 pub fn writeCheckbox(writer: *std.Io.Writer, name: []const u8, value: []const u8, options: CheckboxOptions) !void {
-    try writeHtmlTag(writer, "input", .{ .type = "checkbox", .name = name, .id = name, .value = "1", .checked = std.mem.eql(u8, "1", value), .class = options.class orelse "" }, .{ .self_closing = true });
-    try writeHtmlTag(writer, "input", .{ .type = "hidden", .name = name, .value = "0", .class = options.class orelse "" }, .{ .self_closing = true });
+    try writeHtmlTag(
+        writer,
+        "input",
+        .{
+            .type = "checkbox",
+            .name = name,
+            .id = name,
+            .value = "1",
+            .checked = std.mem.eql(u8, "1", value),
+            .class = options.class,
+        },
+        .{ .self_closing = true },
+    );
+    try writeHtmlTag(
+        writer,
+        "input",
+        .{
+            .type = "hidden",
+            .name = name,
+            .value = "0",
+            .class = options.class,
+        },
+        .{ .self_closing = true },
+    );
 }
 
 pub const SubmitOptions = struct {

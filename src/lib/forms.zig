@@ -39,7 +39,7 @@ pub fn Form(comptime Model: type) type {
                 writer,
                 csrf_token_input_name,
                 &self.csrf_token,
-                .{ .type = "hidden" },
+                view_helpers.HiddenInputOptions{},
             );
         }
 
